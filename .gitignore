@@ -1,5 +1,4 @@
-.cpcache/
-target/
-.nrepl-port
-*.jar
-.DS_Store
+/.cpcache/
+/target/
+/out/
+/.clj-kondo/.cache/

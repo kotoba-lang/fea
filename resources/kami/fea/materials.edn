@@ -1,0 +1,37 @@
+;; Built-in linear-elastic material presets — data port of kami-cae's
+;; `material::MaterialLibrary::with_presets` (kami-engine, kami-cae/src/lib.rs).
+;;
+;; Units: youngs-modulus (Pa), density (kg/m^3), thermal-expansion (1/K),
+;; thermal-conductivity (W/(m*K)), specific-heat (J/(kg*K)).
+[{:name "Steel-Structural"
+  :model {:type :linear-elastic
+          :youngs-modulus 200.0e9
+          :poissons-ratio 0.3
+          :density 7850.0
+          :thermal-expansion 12.0e-6
+          :thermal-conductivity 50.0
+          :specific-heat 490.0}}
+ {:name "Aluminum-6061"
+  :model {:type :linear-elastic
+          :youngs-modulus 68.9e9
+          :poissons-ratio 0.33
+          :density 2700.0
+          :thermal-expansion 23.6e-6
+          :thermal-conductivity 167.0
+          :specific-heat 896.0}}
+ {:name "Titanium-6Al4V"
+  :model {:type :linear-elastic
+          :youngs-modulus 113.8e9
+          :poissons-ratio 0.342
+          :density 4430.0
+          :thermal-expansion 8.6e-6
+          :thermal-conductivity 6.7
+          :specific-heat 526.0}}
+ {:name "Concrete"
+  :model {:type :linear-elastic
+          :youngs-modulus 30.0e9
+          :poissons-ratio 0.2
+          :density 2400.0
+          :thermal-expansion 10.0e-6
+          :thermal-conductivity 1.7
+          :specific-heat 880.0}}]
