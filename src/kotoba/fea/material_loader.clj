@@ -10,7 +10,16 @@
   `kotoba.fea.material/presets-resource` via their own host's I/O and pass
   the parsed EDN to `kotoba.fea.material/find-material`/`add-material`,
   which are pure. Mirrors `kami-scene-contracts/src/kami/scene/contracts.cljc`'s
-  `load-edn-resource` EDN-authority pattern."
+  `load-edn-resource` EDN-authority pattern.
+
+  `materials.edn` itself is now a Datomic/Datascript-queryable tx-data
+  vector (`scripts/edn-datomize.bb wrap-vec`, one entity per preset under
+  the `:kami.fea.material/*` namespace, `:model` blobbed as `pr-str` since
+  it's a nested map — see `schema.edn`). `presets` reconstitutes each
+  entity back into the original plain `{:name :model}` shape so
+  `kotoba.fea.material/find-material`/`add-material` and existing callers
+  (e.g. `material-test.clj`'s `(get-in steel [:model :youngs-modulus])`)
+  are unaffected."
   (:require [clojure.edn :as edn]
             [clojure.java.io :as io]
             [kotoba.fea.material :as material]))
@@ -21,7 +30,21 @@
       (throw (ex-info "missing fea resource" {:path path})))
     (edn/read-string (slurp resource))))
 
+(defn- unblob [v]
+  (if (string? v)
+    (try (let [parsed (edn/read-string v)] (if (coll? parsed) parsed v))
+         (catch Exception _ v))
+    v))
+
+(defn- reconstitute-entity
+  "Datomic/Datascript entity map (namespaced attrs, :db/id, blob strings for
+  nested values) -> original bare-key plain map."
+  [entity]
+  (into {} (map (fn [[k v]] [(keyword (name k)) (unblob v)]))
+        (dissoc entity :db/id)))
+
 (defn presets
-  "Built-in material presets, loaded from the EDN resource."
+  "Built-in material presets, loaded from the EDN resource and reconstituted
+  into plain `{:name :model}` maps (see namespace docstring)."
   []
-  (load-edn-resource material/presets-resource))
+  (mapv reconstitute-entity (load-edn-resource material/presets-resource)))
