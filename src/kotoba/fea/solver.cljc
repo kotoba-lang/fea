@@ -341,8 +341,8 @@
   `:linear-elastic` model (uses :youngs-modulus and :poissons-ratio).
   Returns `{:analysis-id :displacement :stress :strain :max-displacement
   :max-stress}` — `:displacement` is a vector of [x y z] per node.
-  `:stress`/`:strain` are per-element (beam2: axial |sigma|; tet4: reported
-  as 0 for now — bending stress recovery is a follow-up)."
+  `:stress`/`:strain` are per-element (beam2: axial |sigma|; tet4: von Mises
+  stress, with the B*D stress-recovery using the element's constant strain)."
   [mesh material bcs]
   (when (not= (:type (:model material)) :linear-elastic)
     (throw (ex-info "unsupported material model for this solver" {:type :unsupported-element})))
@@ -375,8 +375,33 @@
                         eps (/ (v3/dot (v3/sub uj ui) dir) length)
                         sig (* youngs-modulus eps)]
                     {:strain eps :stress (v3/abs* sig)})
-                  ;; tet4 stress recovery not implemented yet — report 0
-                  {:strain 0.0 :stress 0.0}))
+                  :tet4
+                  (let [ids (:nodes elem)
+                        p0 (:position (nth nodes (ids 0)))
+                        p1 (:position (nth nodes (ids 1)))
+                        p2 (:position (nth nodes (ids 2)))
+                        p3 (:position (nth nodes (ids 3)))
+                        grads (tet4-grads p0 p1 p2 p3)]
+                    (if (nil? grads)
+                      {:strain 0.0 :stress 0.0}     ; degenerate element
+                      (let [B (tet4-B grads)
+                            D (isotropic-3D-D youngs-modulus poissons-ratio)
+                            ;; element nodal displacement, 12 flat
+                            u-elem (vec (mapcat #(nth displacement %) ids))
+                            ;; strain = B * u  (6 voigt, constant in element)
+                            eps (vec (for [r (range 6)]
+                                       (reduce + (for [c (range 12)]
+                                                   (* (at B 12 r c) (nth u-elem c))))))
+                            ;; stress = D * eps (6 voigt)
+                            sig (vec (for [r (range 6)]
+                                       (reduce + (for [c (range 6)]
+                                                   (* (at D 6 r c) (nth eps c))))))
+                            [sxx syy szz syz sxz sxy] sig
+                            vm (v3/sqrt* (+ (* 0.5 (+ (* (- sxx syy) (- sxx syy))
+                                                      (* (- syy szz) (- syy szz))
+                                                      (* (- szz sxx) (- szz sxx))))
+                                             (* 3.0 (+ (* syz syz) (* sxz sxz) (* sxy sxy)))))]
+                        {:strain (first eps) :stress vm})))))
               (:elements mesh))
         stress (mapv :stress stress-strain)
         strain (mapv :strain stress-strain)

@@ -56,3 +56,14 @@
         d1  (:max-displacement (solver/solve-linear-static m (mk 1.0e10) bcs))
         d2  (:max-displacement (solver/solve-linear-static m (mk 2.0e10) bcs))]
     (is (< d2 d1))))
+
+(deftest tet4-recovers-positive-von-mises-stress-test
+  ;; Under load the element must report a positive von Mises stress
+  ;; (stress recovery via B*D, no longer hardcoded 0).
+  (let [m   (unit-cube-tet4-mesh)
+        mat {:name "t" :model {:type :linear-elastic
+                               :youngs-modulus 1.0e10 :poissons-ratio 0.3}}
+        bcs [(boundary/displacement "fixed" boundary/dof-all [0.0 0.0 0.0])
+             (boundary/force "load" [0.0 0.0 -100.0])]
+        res (solver/solve-linear-static m mat bcs)]
+    (is (pos? (:max-stress res)))))
