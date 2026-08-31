@@ -164,16 +164,11 @@
                  " expected " (- expected)))))))
 
 (deftest unsupported-bc-rejected-loudly-test
-  ;; `:pressure` and `:convection` are constructed by kotoba.fea.boundary
-  ;; but not implemented by this solver. Before this contract they were
-  ;; SILENTLY IGNORED — a wrong structural answer with no error. They must
-  ;; now be rejected.
-  (let [{:keys [mesh]} (bar-mesh 1.0)
-        bcs [(boundary/displacement "fixed" boundary/dof-all [0.0 0.0 0.0])
-             (boundary/force "free" [1.0 0.0 0.0])
-             (boundary/pressure "free" 101325.0)]]
-    (is (thrown-with-msg? clojure.lang.ExceptionInfo #"unsupported boundary condition type"
-                          (solver/solve-linear-static mesh steel bcs))))
+  ;; `:convection` is constructed by kotoba.fea.boundary but not
+  ;; implemented by this solver. Before the thermal contract it (and
+  ;; `:pressure`) were SILENTLY IGNORED — a wrong structural answer with
+  ;; no error. `:convection` must still be rejected; `:pressure` is now
+  ;; implemented for tet4 boundary faces (see pressure-test).
   (let [{:keys [mesh]} (bar-mesh 1.0)
         bcs [(boundary/displacement "fixed" boundary/dof-all [0.0 0.0 0.0])
              (boundary/force "free" [1.0 0.0 0.0])

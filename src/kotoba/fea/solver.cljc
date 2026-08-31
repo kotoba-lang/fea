@@ -15,8 +15,9 @@
   Errors are reported via `ex-info` with `:type` one of `:singular-matrix`
   `:unsupported-element` `:no-loads` `:node-set-not-found`
   `:unsupported-bc-type` `:temperature-undefined`
-  `:reference-temperature-required` `:thermal-expansion-missing`. No network,
-  no I/O.
+  `:reference-temperature-required` `:thermal-expansion-missing`
+  `:face-set-not-found` `:face-not-in-tet4` `:ambiguous-face`
+  `:degenerate-face`. No network, no I/O.
 
   Thermal strain (tet4 + beam2): `:temperature` boundary conditions (the
   constructors in `kotoba.fea.boundary`) prescribe nodal temperatures.
@@ -26,11 +27,22 @@
   f = integral B^T D eps_th dV (exact for the constant-strain tet4 / axial
   beam2) and subtracted from the mechanical strain in stress recovery
   (sigma = D (B u - eps_th)). Without `:temperature` BCs the solve is
-  bit-for-bit the previous purely mechanical one. Boundary-condition types
-  other than `:force`/`:displacement`/`:temperature` (`:pressure`,
-  `:convection`) are REJECTED loudly (`:unsupported-bc-type`) instead of
-  being silently ignored — a silent drop would return a wrong structural
-  answer with no error."
+  bit-for-bit the previous purely mechanical one.
+
+  Surface pressure (tet4): a `:pressure` boundary condition names a face
+  set (`kotoba.fea.mesh/create-face-set`, triangular faces `[a b c]` node
+  ids). Uniform pressure p [Pa] (positive = pushing against the structure)
+  on each boundary face of a :tet4 element is integrated exactly
+  (p*A/3 per face node — constant traction, linear element) and assembled
+  as nodal loads; the outward normal is taken from the element's interior
+  node, so face node winding is irrelevant. A face that is not a boundary
+  face of exactly one tet4 errors (`:face-not-in-tet4` / `:ambiguous-face`)
+  rather than guessing a normal.
+
+  Boundary-condition types other than `:force`/`:displacement`/
+  `:temperature`/`:pressure` (`:convection`) are REJECTED loudly
+  (`:unsupported-bc-type`) instead of being silently ignored — a silent
+  drop would return a wrong structural answer with no error."
   (:require [kotoba.fea.vec3 :as v3]))
 
 ;; ---------------------------------------------------------------------------
@@ -287,12 +299,12 @@
 
 (defn- apply-force-bcs
   "Apply :force BCs. Throws :no-loads only when there are no loads at all
-  (no force AND, when `thermal?`, no temperature BCs either — a pure
-  thermal problem legitimately carries no mechanical force)."
+  (no force AND no other load type either — a pure thermal or pure
+  pressure problem legitimately carries no concentrated force)."
   ([f-global mesh bcs] (apply-force-bcs f-global mesh bcs false))
-  ([f-global mesh bcs thermal?]
+  ([f-global mesh bcs other-loads?]
    (let [force-bcs (filter #(= (:type %) :force) bcs)]
-    (when (and (empty? force-bcs) (not thermal?))
+    (when (and (empty? force-bcs) (not other-loads?))
       (throw (ex-info "no force boundary conditions specified" {:type :no-loads})))
     (reduce
      (fn [f {:keys [node-set value]}]
@@ -306,6 +318,98 @@
                   f ids)))
      f-global
      force-bcs))))
+
+;; ---------------------------------------------------------------------------
+;; surface pressure (tet4)
+;; ---------------------------------------------------------------------------
+
+(defn tet4-face-pressure-load
+  "Consistent nodal loads for uniform pressure `p` [Pa] on triangular face
+  `face` `[a b c]` (node ids) of a tet4 element whose remaining (interior)
+  node is `interior-id`. `nodes` is the mesh's node vector.
+
+  Sign convention: positive `p` acts ON the face — it pushes against the
+  element, i.e. the load on each face node points along the inward
+  normal. For the linear tet4 the consistent load of a uniform traction
+  is exact: each of the 3 face nodes carries p*A/3 along the normal
+  (lumped from the element's constant-traction surface integral).
+
+  Returns `{node-id [fx fy fz]}`. Throws `:degenerate-face` when the face
+  has zero area. Pure — no I/O, portable."
+  [nodes face interior-id p]
+  (let [pos #(:position (nth nodes %))
+        [a b c] face
+        pa (pos a)
+        e1 (v3/sub (pos b) pa)
+        e2 (v3/sub (pos c) pa)
+        n (cross e1 e2)
+        area2 (v3/length n)]
+    (when (< area2 1e-30)
+      (throw (ex-info (str "degenerate (zero-area) face " (vec face))
+                      {:type :degenerate-face :face (vec face)})))
+    (let [nhat (v3/scale n (/ 1.0 area2))
+          centroid (v3/scale (v3/add pa (v3/add (pos b) (pos c))) (/ 1.0 3.0))
+          ;; outward = away from the element's interior node
+          inward (if (pos? (v3/dot nhat (v3/sub (pos interior-id) centroid)))
+                   nhat
+                   (v3/scale nhat -1.0))
+          ;; per-node load = -p*A/3 * outward = +p*A/3 * inward (A = |n|/2)
+          f (v3/scale inward (/ (* p area2 0.5) 3.0))]
+      {a f b f c f})))
+
+(defn- tet4-elements-containing-face
+  "All :tet4 elements whose node set contains every node of `face`.
+  `face` must be 3 distinct node ids."
+  [mesh face]
+  (when-not (and (sequential? face) (= 3 (count (distinct face))))
+    (throw (ex-info (str "invalid face " (vec face)
+                         " — a face is 3 distinct node ids")
+                    {:type :invalid-face :face (vec face)})))
+  (let [nodes-set-fn (fn [elem] (set (:nodes elem)))]
+    (filter (fn [elem]
+              (and (= :tet4 (:type elem))
+                   (every? (nodes-set-fn elem) face)))
+            (:elements mesh))))
+
+(defn- apply-pressure-bcs
+  "Apply :pressure BCs (uniform pressure on named face sets) as consistent
+  nodal loads. Each face must be a boundary face of exactly one :tet4
+  element — an interior face shared by two elements (`:ambiguous-face`)
+  or a face in no tet4 (`:face-not-in-tet4`) is an error, never a guess."
+  [f-global mesh bcs]
+  (let [pressure-bcs (filter #(= (:type %) :pressure) bcs)]
+    (reduce
+     (fn [f {:keys [face-set value]}]
+       (let [faces (or (get (:face-sets mesh) face-set)
+                       (throw (ex-info (str "face set '" face-set "' not found in mesh")
+                                       {:type :face-set-not-found :face-set face-set})))]
+         (reduce
+          (fn [f face]
+            (let [elems (tet4-elements-containing-face mesh face)
+                  elem (case (count elems)
+                         0 (throw (ex-info (str "face " (vec face) " is not part of any :tet4 element")
+                                           {:type :face-not-in-tet4 :face (vec face)}))
+                         1 (first elems)
+                         (throw (ex-info (str "face " (vec face)
+                                              " is shared by " (count elems)
+                                              " :tet4 elements — only boundary faces are supported")
+                                         {:type :ambiguous-face :face (vec face)})))
+                  interior (some #(when-not (contains? (set face) %) %)
+                                 (:nodes elem))
+                  loads (tet4-face-pressure-load (:nodes mesh) face interior value)]
+              (reduce-kv
+               (fn [f nid fv]
+                 (let [base (* nid 3)]
+                   (-> f
+                       (add-at base (nth fv 0))
+                       (add-at (inc base) (nth fv 1))
+                       (add-at (+ base 2) (nth fv 2)))))
+               f
+               loads)))
+          f
+          faces)))
+     f-global
+     pressure-bcs)))
 
 (defn- apply-displacement-bcs [k-global f-global mesh ndof bcs]
    (let [masks [:x :y :z]]
@@ -364,10 +468,10 @@
 
 (def supported-bc-types
   "Boundary-condition types this solver consumes. Anything else —
-  including the `:pressure`/`:convection` constructors that
-  `kotoba.fea.boundary` exports for future solvers — is rejected with
-  `:unsupported-bc-type` rather than silently dropped."
-  #{:force :displacement :temperature})
+  including the `:convection` constructor that `kotoba.fea.boundary`
+  exports for future solvers — is rejected with `:unsupported-bc-type`
+  rather than silently dropped."
+  #{:force :displacement :temperature :pressure})
 
 (defn- validate-bc-types [bcs]
   (doseq [bc bcs]
@@ -482,7 +586,12 @@
   `{:reference-temperature T0}` (Kelvin, caller-supplied — never assumed).
   The material model must carry `:thermal-expansion` [1/K]. The result
   additionally carries `:thermal` `{:reference-temperature :nodal-temperature}`.
-  Boundary-condition types other than `:force`/`:displacement`/`:temperature`
+
+  Pressure: a `:pressure` BC names a face set (`mesh/create-face-set`);
+  uniform pressure p [Pa] (positive = pushing against the structure) on
+  each boundary face of a :tet4 element becomes consistent nodal loads
+  (p*A/3 per face node, exact for the linear element). Boundary-condition
+  types other than `:force`/`:displacement`/`:temperature`/`:pressure`
   throw `:unsupported-bc-type` (loud failure, not silent drop)."
   ([mesh material bcs]
    (solve-linear-static mesh material bcs nil))
@@ -507,12 +616,15 @@
                    (throw (ex-info ":temperature BCs present but material model has no :thermal-expansion"
                                    {:type :thermal-expansion-missing})))
                  (nodal-temperatures mesh bcs))
-         f1 (apply-force-bcs f0 mesh bcs (boolean temps))
+         f1 (apply-force-bcs f0 mesh bcs
+                             (or (boolean temps)
+                                 (some #(= (:type %) :pressure) bcs)))
+         f1p (apply-pressure-bcs f1 mesh bcs)
          f-th (if temps
                 (assemble-thermal-forces mesh temps reference-temperature
                                          youngs-modulus poissons-ratio alpha ndof)
                 f0)
-         f1' (mapv + f1 f-th)
+         f1' (mapv + f1p f-th)
          [k2 f2] (apply-displacement-bcs k0 f1' mesh ndof bcs)
          k3 (stabilize k2 ndof)
          u (cholesky-solve k3 f2 ndof)

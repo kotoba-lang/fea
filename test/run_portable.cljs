@@ -17,11 +17,13 @@
 (require '[cljs.test :as t]
          '[kotoba.fea.boundary-test]
          '[kotoba.fea.mesh-test]
-         '[kotoba.fea.postprocess-test])
+         '[kotoba.fea.postprocess-test]
+         '[kotoba.fea.pressure-test])
 
 (defmethod t/report [:cljs.test/default :end-run-tests] [m]
   (when-not (t/successful? m) (set! (.-exitCode js/process) 1)))
 
 (t/run-tests 'kotoba.fea.boundary-test
-              'kotoba.fea.mesh-test
-              'kotoba.fea.postprocess-test)
+             'kotoba.fea.mesh-test
+             'kotoba.fea.postprocess-test
+             'kotoba.fea.pressure-test)
