@@ -13,7 +13,24 @@
 
   Only translational DOFs (x, y, z per node -> 3*N total DOFs) are considered.
   Errors are reported via `ex-info` with `:type` one of `:singular-matrix`
-  `:unsupported-element` `:no-loads` `:node-set-not-found`. No network, no I/O."
+  `:unsupported-element` `:no-loads` `:node-set-not-found`
+  `:unsupported-bc-type` `:temperature-undefined`
+  `:reference-temperature-required` `:thermal-expansion-missing`. No network,
+  no I/O.
+
+  Thermal strain (tet4 + beam2): `:temperature` boundary conditions (the
+  constructors in `kotoba.fea.boundary`) prescribe nodal temperatures.
+  Together with a `:reference-temperature` option they produce an isotropic
+  initial strain eps_th = alpha * (T - T_ref) [1/K, alpha from the material
+  model's `:thermal-expansion`], carried as equivalent nodal forces
+  f = integral B^T D eps_th dV (exact for the constant-strain tet4 / axial
+  beam2) and subtracted from the mechanical strain in stress recovery
+  (sigma = D (B u - eps_th)). Without `:temperature` BCs the solve is
+  bit-for-bit the previous purely mechanical one. Boundary-condition types
+  other than `:force`/`:displacement`/`:temperature` (`:pressure`,
+  `:convection`) are REJECTED loudly (`:unsupported-bc-type`) instead of
+  being silently ignored — a silent drop would return a wrong structural
+  answer with no error."
   (:require [kotoba.fea.vec3 :as v3]))
 
 ;; ---------------------------------------------------------------------------
@@ -102,9 +119,9 @@
   "Inverse of a 3x3 matrix (nested rows [[a00 a01 a02] ...]). Returns the
   inverse as nested rows, or nil if (near-)singular."
   [[[a00 a01 a02] [a10 a11 a12] [a20 a21 a22]]]
-  (let [det (- (+ (* a00 (- (* a11 a22) (* a12 a21)))
-                  (* a01 (- (* a12 a20) (* a10 a22)))
-                  (* a02 (- (* a10 a21) (* a11 a20)))))]
+  (let [det (+ (* a00 (- (* a11 a22) (* a12 a21)))
+               (* a01 (- (* a12 a20) (* a10 a21)))
+               (* a02 (- (* a10 a21) (* a11 a20))))]
     (when (> (v3/abs* det) 1e-30)
       (let [inv-det (/ 1.0 det)]
         [[(* inv-det (- (* a11 a22) (* a12 a21)))
@@ -268,9 +285,14 @@
      (vec (repeat (* ndof ndof) 0.0))
      (:elements mesh))))
 
-(defn- apply-force-bcs [f-global mesh bcs]
-  (let [force-bcs (filter #(= (:type %) :force) bcs)]
-    (when (empty? force-bcs)
+(defn- apply-force-bcs
+  "Apply :force BCs. Throws :no-loads only when there are no loads at all
+  (no force AND, when `thermal?`, no temperature BCs either — a pure
+  thermal problem legitimately carries no mechanical force)."
+  ([f-global mesh bcs] (apply-force-bcs f-global mesh bcs false))
+  ([f-global mesh bcs thermal?]
+   (let [force-bcs (filter #(= (:type %) :force) bcs)]
+    (when (and (empty? force-bcs) (not thermal?))
       (throw (ex-info "no force boundary conditions specified" {:type :no-loads})))
     (reduce
      (fn [f {:keys [node-set value]}]
@@ -283,10 +305,10 @@
                       (-> f (add-at base vx) (add-at (inc base) vy) (add-at (+ base 2) vz))))
                   f ids)))
      f-global
-     force-bcs)))
+     force-bcs))))
 
 (defn- apply-displacement-bcs [k-global f-global mesh ndof bcs]
-  (let [masks [:x :y :z]]
+   (let [masks [:x :y :z]]
     (reduce
      (fn [[k f] bc]
        (if (not= (:type bc) :displacement)
@@ -336,79 +358,237 @@
      k-global
      (range ndof))))
 
+;; ---------------------------------------------------------------------------
+;; thermal strain (tet4 + beam2)
+;; ---------------------------------------------------------------------------
+
+(def supported-bc-types
+  "Boundary-condition types this solver consumes. Anything else —
+  including the `:pressure`/`:convection` constructors that
+  `kotoba.fea.boundary` exports for future solvers — is rejected with
+  `:unsupported-bc-type` rather than silently dropped."
+  #{:force :displacement :temperature})
+
+(defn- validate-bc-types [bcs]
+  (doseq [bc bcs]
+    (when-not (contains? supported-bc-types (:type bc))
+      (throw (ex-info (str "unsupported boundary condition type '"
+                           (:type bc) "' — this solver would silently ignore it")
+                      {:type :unsupported-bc-type :bc bc})))))
+
+(defn- nodal-temperatures
+  "Map node id -> prescribed temperature [K] from `:temperature` BCs.
+  Node sets are resolved against the mesh; a BC naming a missing set and
+  any node left without a prescribed temperature are both errors — the
+  caller must prescribe the complete temperature field, never an
+  assumed one."
+  [mesh bcs]
+  (let [temps (reduce
+               (fn [t {:keys [node-set value]}]
+                 (let [ids (or (get (:node-sets mesh) node-set)
+                               (throw (ex-info (str "node set '" node-set "' not found in mesh")
+                                               {:type :node-set-not-found :node-set node-set})))]
+                   (reduce #(assoc %1 %2 value) t ids)))
+               {}
+               (filter #(= (:type %) :temperature) bcs))]
+    (doseq [n (range (count (:nodes mesh)))]
+      (when-not (contains? temps n)
+        (throw (ex-info (str "node " n " has no prescribed temperature — "
+                             "prescribe the complete nodal temperature field")
+                        {:type :temperature-undefined :node n}))))
+    temps))
+
+(defn- mean-delta-t
+  "Mean (T - T_ref) [K] over an element's nodes. Uniform per element —
+  consistent with the constant-strain tet4 / axial beam2 kinematics."
+  [elem temps reference-temperature]
+  (/ (reduce + (map #(-> (get temps %) (- reference-temperature)) (:nodes elem)))
+     (count (:nodes elem))))
+
+(defn- tet4-thermal-force
+  "Equivalent nodal force (12 flat, element-local DOF order) for a uniform
+  isotropic initial strain eps_th = alpha*dT: f = V * B^T * D * eps_th.
+  Exact for the linear tet4 because B is constant."
+  [B D volume dT alpha]
+  (let [eps-th [(* alpha dT) (* alpha dT) (* alpha dT) 0.0 0.0 0.0]
+        ;; D * eps_th (6)
+        de (vec (for [r (range 6)]
+                  (reduce + (for [k (range 6)] (* (at D 6 r k) (nth eps-th k))))))
+        ;; B^T * (D eps_th) (12)
+        btde (vec (for [r (range 12)]
+                    (reduce + (for [k (range 6)] (* (at B 12 k r) (nth de k))))))]
+    (mapv #(* volume %) btde)))
+
+(defn- beam2-thermal-force
+  "Axial thermal nodal forces for a bar with unit cross-section:
+  N_th = E*A*alpha*dT, pulling node i back / pushing node j forward
+  along the unit axis (uniform free expansion, sign convention: the
+  bar pushes its endpoints apart when heated)."
+  [dir dT alpha youngs-modulus]
+  (let [n-th (* youngs-modulus alpha dT)]     ; A = 1 m^2 (solver convention)
+    {:fi (mapv #(- %) (v3/scale dir n-th))
+     :fj (v3/scale dir n-th)}))
+
+(defn- assemble-thermal-forces
+  "Global thermal equivalent nodal load vector from the prescribed nodal
+  temperature field. Zero vector when no temperatures are prescribed."
+  [mesh temps reference-temperature youngs-modulus poissons-ratio alpha ndof]
+  (if (empty? temps)
+    (vec (repeat ndof 0.0))
+    (let [nodes (:nodes mesh)]
+      (reduce
+       (fn [f elem]
+         (let [dT (mean-delta-t elem temps reference-temperature)]
+           (case (:type elem)
+             :beam2
+             (let [[ni nj] (:nodes elem)
+                   dir (v3/normalize (v3/sub (:position (nth nodes nj))
+                                             (:position (nth nodes ni))))
+                   {:keys [fi fj]} (beam2-thermal-force dir dT alpha youngs-modulus)]
+               (reduce (fn [f [dof v]] (add-at f dof v)) f
+                       (concat (map vector (map #(+ (* ni 3) %) (range 3)) fi)
+                               (map vector (map #(+ (* nj 3) %) (range 3)) fj))))
+             :tet4
+             (let [ids (:nodes elem)
+                   p0 (:position (nth nodes (ids 0)))
+                   p1 (:position (nth nodes (ids 1)))
+                   p2 (:position (nth nodes (ids 2)))
+                   p3 (:position (nth nodes (ids 3)))
+                   grads (tet4-grads p0 p1 p2 p3)]
+               (if (nil? grads)
+                 f                                            ; degenerate: skip
+                 (let [V (/ (v3/abs* (tet4-volume p0 p1 p2 p3)) 6.0)
+                       B (tet4-B grads)
+                       D (isotropic-3D-D youngs-modulus poissons-ratio)
+                       fe (tet4-thermal-force B D V dT alpha)]
+                   (reduce (fn [f i] (add-at f (+ (* (nth ids (quot i 3)) 3) (rem i 3))
+                                              (nth fe i)))
+                           f
+                           (range 12)))))
+             (throw (ex-info "unsupported element type for this solver"
+                             {:type :unsupported-element})))))
+       (vec (repeat ndof 0.0))
+       (:elements mesh)))))
+
 (defn solve-linear-static
   "Solve a linear-static FEA problem. `material` must have a
   `:linear-elastic` model (uses :youngs-modulus and :poissons-ratio).
   Returns `{:analysis-id :displacement :stress :strain :max-displacement
   :max-stress}` — `:displacement` is a vector of [x y z] per node.
   `:stress`/`:strain` are per-element (beam2: axial |sigma|; tet4: von Mises
-  stress, with the B*D stress-recovery using the element's constant strain)."
-  [mesh material bcs]
-  (when (not= (:type (:model material)) :linear-elastic)
-    (throw (ex-info "unsupported material model for this solver" {:type :unsupported-element})))
-  (let [youngs-modulus (:youngs-modulus (:model material))
-        poissons-ratio (or (:poissons-ratio (:model material)) 0.3)
-        nodes (:nodes mesh)
-        n-nodes (count nodes)
-        ndof (* n-nodes 3)
-        k0 (assemble-stiffness mesh youngs-modulus poissons-ratio ndof)
-        f0 (vec (repeat ndof 0.0))
-        f1 (apply-force-bcs f0 mesh bcs)
-        [k2 f2] (apply-displacement-bcs k0 f1 mesh ndof bcs)
-        k3 (stabilize k2 ndof)
-        u (cholesky-solve k3 f2 ndof)
-        displacement (mapv (fn [i] [(nth u (* i 3)) (nth u (inc (* i 3))) (nth u (+ (* i 3) 2))])
+  stress, with the B*D stress-recovery using the element's constant strain).
+
+  Thermal: with `:temperature` BCs present, call the 4-arity with
+  `{:reference-temperature T0}` (Kelvin, caller-supplied — never assumed).
+  The material model must carry `:thermal-expansion` [1/K]. The result
+  additionally carries `:thermal` `{:reference-temperature :nodal-temperature}`.
+  Boundary-condition types other than `:force`/`:displacement`/`:temperature`
+  throw `:unsupported-bc-type` (loud failure, not silent drop)."
+  ([mesh material bcs]
+   (solve-linear-static mesh material bcs nil))
+  ([mesh material bcs {:keys [reference-temperature] :as _opts}]
+   (when (not= (:type (:model material)) :linear-elastic)
+     (throw (ex-info "unsupported material model for this solver" {:type :unsupported-element})))
+   (validate-bc-types bcs)
+   (let [youngs-modulus (:youngs-modulus (:model material))
+         poissons-ratio (or (:poissons-ratio (:model material)) 0.3)
+         alpha (:thermal-expansion (:model material))
+         nodes (:nodes mesh)
+         n-nodes (count nodes)
+         ndof (* n-nodes 3)
+         k0 (assemble-stiffness mesh youngs-modulus poissons-ratio ndof)
+         f0 (vec (repeat ndof 0.0))
+         ;; thermal field: prescribed temperatures only — absent ones error
+         temps (when (some #(= (:type %) :temperature) bcs)
+                 (when (nil? reference-temperature)
+                   (throw (ex-info ":temperature BCs present but no :reference-temperature given"
+                                   {:type :reference-temperature-required})))
+                 (when (nil? alpha)
+                   (throw (ex-info ":temperature BCs present but material model has no :thermal-expansion"
+                                   {:type :thermal-expansion-missing})))
+                 (nodal-temperatures mesh bcs))
+         f1 (apply-force-bcs f0 mesh bcs (boolean temps))
+         f-th (if temps
+                (assemble-thermal-forces mesh temps reference-temperature
+                                         youngs-modulus poissons-ratio alpha ndof)
+                f0)
+         f1' (mapv + f1 f-th)
+         [k2 f2] (apply-displacement-bcs k0 f1' mesh ndof bcs)
+         k3 (stabilize k2 ndof)
+         u (cholesky-solve k3 f2 ndof)
+         displacement (mapv (fn [i] [(nth u (* i 3)) (nth u (inc (* i 3))) (nth u (+ (* i 3) 2))])
                             (range n-nodes))
-        max-displacement (reduce max 0.0 (map v3/length displacement))
-        stress-strain
-        (mapv (fn [elem]
-                (case (:type elem)
-                  :beam2
-                  (let [[ni nj] (:nodes elem)
-                        pi (:position (nth nodes ni))
-                        pj (:position (nth nodes nj))
-                        delta (v3/sub pj pi)
-                        length (v3/length delta)
-                        dir (v3/scale delta (/ 1.0 length))
-                        ui (nth displacement ni)
-                        uj (nth displacement nj)
-                        eps (/ (v3/dot (v3/sub uj ui) dir) length)
-                        sig (* youngs-modulus eps)]
-                    {:strain eps :stress (v3/abs* sig)})
-                  :tet4
-                  (let [ids (:nodes elem)
-                        p0 (:position (nth nodes (ids 0)))
-                        p1 (:position (nth nodes (ids 1)))
-                        p2 (:position (nth nodes (ids 2)))
-                        p3 (:position (nth nodes (ids 3)))
-                        grads (tet4-grads p0 p1 p2 p3)]
-                    (if (nil? grads)
-                      {:strain 0.0 :stress 0.0}     ; degenerate element
-                      (let [B (tet4-B grads)
-                            D (isotropic-3D-D youngs-modulus poissons-ratio)
-                            ;; element nodal displacement, 12 flat
-                            u-elem (vec (mapcat #(nth displacement %) ids))
-                            ;; strain = B * u  (6 voigt, constant in element)
-                            eps (vec (for [r (range 6)]
-                                       (reduce + (for [c (range 12)]
-                                                   (* (at B 12 r c) (nth u-elem c))))))
-                            ;; stress = D * eps (6 voigt)
-                            sig (vec (for [r (range 6)]
-                                       (reduce + (for [c (range 6)]
-                                                   (* (at D 6 r c) (nth eps c))))))
-                            [sxx syy szz syz sxz sxy] sig
-                            vm (v3/sqrt* (+ (* 0.5 (+ (* (- sxx syy) (- sxx syy))
-                                                      (* (- syy szz) (- syy szz))
-                                                      (* (- szz sxx) (- szz sxx))))
-                                             (* 3.0 (+ (* syz syz) (* sxz sxz) (* sxy sxy)))))]
-                        {:strain (first eps) :stress vm})))))
-              (:elements mesh))
-        stress (mapv :stress stress-strain)
-        strain (mapv :strain stress-strain)
-        max-stress (reduce max 0.0 stress)]
-    {:analysis-id "linear-static-0"
-     :displacement displacement
-     :stress stress
-     :strain strain
-     :max-displacement max-displacement
-     :max-stress max-stress}))
+         max-displacement (reduce max 0.0 (map v3/length displacement))
+         stress-strain
+         (mapv (fn [elem]
+                 (case (:type elem)
+                   :beam2
+                   (let [[ni nj] (:nodes elem)
+                         pi (:position (nth nodes ni))
+                         pj (:position (nth nodes nj))
+                         delta (v3/sub pj pi)
+                         length (v3/length delta)
+                         dir (v3/scale delta (/ 1.0 length))
+                         ui (nth displacement ni)
+                         uj (nth displacement nj)
+                         eps (/ (v3/dot (v3/sub uj ui) dir) length)
+                         ;; mechanical strain excludes the thermal initial strain
+                         eps-th (if temps (* alpha (mean-delta-t elem temps reference-temperature)) 0.0)
+                         sig (* youngs-modulus (- eps eps-th))]
+                     {:strain eps :stress (v3/abs* sig) :mechanical-strain (- eps eps-th)})
+                   :tet4
+                   (let [ids (:nodes elem)
+                         p0 (:position (nth nodes (ids 0)))
+                         p1 (:position (nth nodes (ids 1)))
+                         p2 (:position (nth nodes (ids 2)))
+                         p3 (:position (nth nodes (ids 3)))
+                         grads (tet4-grads p0 p1 p2 p3)]
+                     (if (nil? grads)
+                       {:strain 0.0 :stress 0.0}     ; degenerate element
+                       (let [B (tet4-B grads)
+                             D (isotropic-3D-D youngs-modulus poissons-ratio)
+                             ;; element nodal displacement, 12 flat
+                             u-elem (vec (mapcat #(nth displacement %) ids))
+                             ;; strain = B * u  (6 voigt, constant in element)
+                             eps (vec (for [r (range 6)]
+                                        (reduce + (for [c (range 12)]
+                                                    (* (at B 12 r c) (nth u-elem c))))))
+                             eps-th (if temps
+                                      (let [a (* alpha (mean-delta-t elem temps reference-temperature))]
+                                        [a a a 0.0 0.0 0.0])
+                                      [0.0 0.0 0.0 0.0 0.0 0.0])
+                             ;; mechanical strain = total - thermal initial strain
+                             eps-m (mapv - eps eps-th)
+                             ;; stress = D * eps_m (6 voigt)
+                             sig (vec (for [r (range 6)]
+                                        (reduce + (for [c (range 6)]
+                                                    (* (at D 6 r c) (nth eps-m c))))))
+                             [sxx syy szz syz sxz sxy] sig
+                             vm (v3/sqrt* (+ (* 0.5 (+ (* (- sxx syy) (- sxx syy))
+                                                       (* (- syy szz) (- syy szz))
+                                                       (* (- szz sxx) (- szz sxx))))
+                                            (* 3.0 (+ (* syz syz) (* sxz sxz) (* sxy sxy)))))]
+                         {:strain (first eps) :stress vm
+                          ;; full 6-voigt mechanical stress — von Mises alone
+                          ;; hides hydrostatic states (vm of -p*I is 0), which
+                          ;; is exactly the state a fully constrained thermal
+                          ;; expansion produces. Callers judging brittle-
+                          ;; fracture or hydrostatic tension need the components.
+                          :stress-voigt sig :mechanical-strain (first eps-m)})))))
+               (:elements mesh))
+         stress (mapv :stress stress-strain)
+         strain (mapv :strain stress-strain)
+         max-stress (reduce max 0.0 stress)
+         thermal (when temps
+                   {:reference-temperature reference-temperature
+                    :nodal-temperature (mapv #(get temps %) (range n-nodes))})]
+     (cond-> {:analysis-id "linear-static-0"
+              :displacement displacement
+              :stress stress
+              ;; tet4 elements carry the full 6-voigt mechanical stress
+              ;; (beam2 entries nil) — see the tet4 recovery note above.
+              :stress-voigt (mapv :stress-voigt stress-strain)
+              :strain strain
+              :max-displacement max-displacement
+              :max-stress max-stress}
+       thermal (assoc :thermal thermal)))))

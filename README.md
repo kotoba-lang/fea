@@ -29,8 +29,22 @@ GraalVM.
 | | |
 |---|---|
 | Role | capability |
-| Tests | 22 tests, 48 assertions across 5 namespaces, all green |
-| Solver scope | linear-static, `:beam2` (1-D bar) elements only — matches upstream `kami-cae`'s own scope exactly |
+| Tests | 35 tests, 78 assertions across 6 namespaces, all green |
+| Solver scope | linear-static, `:beam2` (1-D bar, axial) + `:tet4` (3-D) elements; isotropic thermal strain from `:temperature` BCs + `:reference-temperature` |
+
+## Thermal strain (tet4 + beam2)
+
+`kotoba.fea.boundary/temperature` prescribes nodal temperatures; pass
+`{:reference-temperature T0}` (Kelvin — caller-supplied, never assumed) as
+the 4th argument to `solver/solve-linear-static`. The material model must
+carry `:thermal-expansion` [1/K] (the built-in presets do). The solve
+carries the isotropic initial strain eps_th = alpha (T − T0) as equivalent
+nodal forces and subtracts it in stress recovery. tet4 results expose the
+full 6-voigt mechanical stress via `:stress-voigt` — the von Mises scalar
+alone reads 0 for the hydrostatic state that fully constrained thermal
+expansion produces. `:pressure`/`:convection` BCs (constructed by
+`kotoba.fea.boundary` but not implemented by this solver) are rejected
+loudly (`:unsupported-bc-type`) instead of being silently dropped.
 
 ## What was ported
 
