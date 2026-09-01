@@ -29,8 +29,8 @@ GraalVM.
 | | |
 |---|---|
 | Role | capability |
-| Tests | 22 tests, 48 assertions across 5 namespaces, all green |
-| Solver scope | linear-static, `:beam2` (1-D bar) elements only — matches upstream `kami-cae`'s own scope exactly |
+| Tests | 29 tests, 80 assertions across 7 namespaces, all green |
+| Solver scope | linear-static (`:beam2` + `:tet4`) plus steady-state thermal conduction (`:thermal-steady` in `kotoba.fea.thermal`) |
 
 ## What was ported
 
@@ -141,6 +141,34 @@ same zero-stiffness-DOF stabilization. `SolverError`'s four variants
 `:singular-matrix` / `:unsupported-element` / `:no-loads` /
 `:node-set-not-found` — idiomatic Clojure error reporting in place of a
 `thiserror` enum.
+
+### Thermal (steady-state conduction — beyond upstream scope)
+
+```clojure
+(require '[kotoba.fea.thermal :as thermal])
+
+(thermal/solve-thermal-steady mesh 167.0   ; k [W/(m*K)], e.g. Aluminum-6061 preset
+                              [(boundary/temperature "hot" 400.0)
+                               (boundary/temperature "cold" 300.0)])
+;=> {:analysis-id "thermal-steady-0" :temperature [...] :flux [...]
+;    :heat-flow [...] :reactions [...] :max-temperature T :min-temperature T}
+```
+
+`kami-cae` declared `ThermalSteady` as an enum case but never implemented
+it; this repo does, as a new portable namespace `kotoba.fea.thermal`.
+Linear isotropic steady conduction (`div(k grad T) = 0`) on `:beam2` and
+`:tet4` elements, one temperature DOF per node, sharing the structural
+solver's dense-Cholesky path (and, now public, its `tet4-grads` /
+`tet4-volume` geometry kernels). Boundary conditions: prescribed
+temperature (`:temperature`, node sets) and convection (`:convection`,
+triangular face sets with the consistent h*A/12 matrix — register face
+sets with `thermal/create-face-set` or pass node triples inline).
+Units: temperature [K], k [W/(m*K)], h [W/(m^2*K)], heat flow [W].
+`tet4-grads`/`tet4-volume` were made public in `kotoba.fea.solver` for
+reuse (no other change to the structural solver). Acceptance invariant:
+with no internal sources, `sum(:reactions) = 0` (or the convective loss
+when convection is present); tests verify the exact linear field on a
+1-D rod and a 6-tet unit cube.
 
 `AnalysisType` (6 variants) and `SolverMethod` (3 variants) are ported as
 data only (`kotoba.fea.solver/analysis-types`,

@@ -17,6 +17,7 @@
 (require '[cljs.test :as t]
          '[kotoba.fea.boundary-test]
          '[kotoba.fea.mesh-test]
+         '[kotoba.fea.thermal-test]
          '[kotoba.fea.postprocess-test])
 
 (defmethod t/report [:cljs.test/default :end-run-tests] [m]
@@ -24,4 +25,5 @@
 
 (t/run-tests 'kotoba.fea.boundary-test
               'kotoba.fea.mesh-test
+              'kotoba.fea.thermal-test
               'kotoba.fea.postprocess-test)
