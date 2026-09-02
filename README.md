@@ -29,7 +29,7 @@ GraalVM.
 | | |
 |---|---|
 | Role | capability |
-| Tests | 22 tests, 48 assertions across 5 namespaces, all green |
+| Tests | 29 tests, 83 assertions across 6 namespaces, all green |
 | Solver scope | linear-static, `:beam2` (1-D bar) elements only — matches upstream `kami-cae`'s own scope exactly |
 
 ## What was ported
@@ -171,6 +171,35 @@ average displacement across all nodes. Ported verbatim, limitation and
 all, with a note in the docstring — fixing it would need node positions
 threaded alongside the result, which is a real (not cosmetic) API change
 left for a follow-up.
+
+### Fatigue (new, not a port)
+
+`kotoba.fea.fatigue` is **new** capability with no `kami-cae` counterpart:
+Miner's-rule cumulative damage accumulation over constant-amplitude
+spectrum blocks against a Basquin S-N curve, with an optional endurance
+limit. It exists so a stress history (e.g. FEA-post-processed stress
+ranges, or vehicle duty-cycle load spectra) can be turned into an
+auditable cumulative-damage number. The contract is deliberately not a
+material-property authority: every curve must carry `:provenance`
+(`:source` + `:date`) or the call throws — unmeasured constants are never
+assumed, and curve fixtures in tests are labelled illustrative-only.
+
+```clojure
+(require '[kotoba.fea.fatigue :as fatigue])
+
+(def curve
+  {:type :basquin :basquin-b -0.12 :basquin-C 1.0e11
+   :endurance-limit-Pa 1.0e7
+   :provenance {:source "<measured source>" :date "<measured date>"}})
+
+(fatigue/spectrum-damage
+  curve
+  [{:stress-range-Pa 2.0e8 :cycles 1000.0}
+   {:stress-range-Pa 1.0e7 :cycles 1.0e9}]) ;=> {:total-damage d
+                                               :fatigue-margin (- 1.0 d)
+                                               :non-damaging-blocks 1
+                                               :criterion :miner-linear ...}
+```
 
 ## What was intentionally left unported, and why
 

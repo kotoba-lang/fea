@@ -16,6 +16,7 @@
 ;; against the tree.
 (require '[cljs.test :as t]
          '[kotoba.fea.boundary-test]
+         '[kotoba.fea.fatigue-test]
          '[kotoba.fea.mesh-test]
          '[kotoba.fea.postprocess-test])
 
@@ -23,5 +24,6 @@
   (when-not (t/successful? m) (set! (.-exitCode js/process) 1)))
 
 (t/run-tests 'kotoba.fea.boundary-test
-              'kotoba.fea.mesh-test
-              'kotoba.fea.postprocess-test)
+             'kotoba.fea.fatigue-test
+             'kotoba.fea.mesh-test
+             'kotoba.fea.postprocess-test)
