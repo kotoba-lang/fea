@@ -29,7 +29,7 @@ GraalVM.
 | | |
 |---|---|
 | Role | capability |
-| Tests | 22 tests, 48 assertions across 5 namespaces, all green |
+| Tests | 36 tests, 80 assertions across 9 namespaces (JVM) and 27 tests, 57 assertions (portable nbb suite), all green |
 | Solver scope | linear-static, `:beam2` (1-D bar) elements only — matches upstream `kami-cae`'s own scope exactly |
 
 ## What was ported
