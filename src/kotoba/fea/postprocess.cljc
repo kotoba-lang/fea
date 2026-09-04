@@ -35,6 +35,69 @@
     (let [ds (:displacement result)]
       (v3/scale (reduce v3/add v3/zero ds) (/ 1.0 (count ds))))))
 
+(def provenance-required-keys
+  "Keys that must be present (non-nil) in a provenance map handed to
+  [[factor-of-safety]]: where the allowable came from and which failure
+  mode it bounds. No default is ever substituted — an unprovenanced
+  allowable is not an allowable (same rule as `kotoba.fea.convergence`,
+  which requires a caller-owned `fs`)."
+  [:source :basis])
+
+(defn- require-allowable!
+  [{:keys [allowable-stress provenance] :as _opts}]
+  (when-not (number? allowable-stress)
+    (throw (ex-info "factor-of-safety: :allowable-stress [Pa] is required and must be a number"
+                    {:type :missing-allowable})))
+  (when-not (pos? allowable-stress)
+    (throw (ex-info "factor-of-safety: :allowable-stress must be positive"
+                    {:type :invalid-allowable :allowable-stress allowable-stress})))
+  (when-not (and (map? provenance)
+                 (every? #(contains? provenance %) provenance-required-keys)
+                 (string? (:source provenance))
+                 (seq (:source provenance)))
+    (throw (ex-info (str "factor-of-safety: :provenance must carry "
+                         provenance-required-keys
+                         " — an unprovenanced allowable is not an allowable")
+                    {:type :missing-provenance
+                     :required provenance-required-keys
+                     :provenance provenance}))))
+
+(defn factor-of-safety
+  "Per-element factor of safety against a **caller-supplied, provenance-carrying**
+  allowable stress. This is the executable counterpart of
+  [[export-color-map-data]]'s `:safety-factor` path, which keeps a
+  hardcoded 250 MPa mild-steel placeholder for kami-cae parity — that
+  placeholder must never be used to grade a real design.
+
+      stresses (per-element, e.g. solver's von Mises values)
+      opts    {:allowable-stress 570.0e6        ; Pa — e.g. AZ31B yield, from a
+                                                ;      dated source the caller owns
+               :provenance {:source \"AMS 4375, 2026-09 retrieval\"
+                            :basis :yield}}
+
+  Returns {:factors [...]                       ; allowable / stress per element,
+                                                ; ##Inf where stress <= 0 (no load
+                                                ; seen — matches export-color-map-data)
+           :min-factor {:value v :element idx}  ; governing element (nil if all Inf)
+           :allowable-stress a :provenance p}
+
+  Fails closed with `ex-info` `:type` `:missing-allowable`
+  `:invalid-allowable` or `:missing-provenance`. No physical constant is
+  invented here; the allowable and its provenance are the caller's."
+  [stresses {:keys [allowable-stress provenance] :as opts}]
+  (require-allowable! opts)
+  (when-not (sequential? stresses)
+    (throw (ex-info "factor-of-safety: stresses must be a sequential collection"
+                    {:type :invalid-stresses})))
+  (let [factors (mapv (fn [s] (if (pos? s) (/ allowable-stress s) ##Inf)) stresses)
+        governing (first (sort-by :value (keep-indexed
+                                          (fn [i f] (when (< f ##Inf) {:value f :element i}))
+                                          factors)))]
+    {:factors factors
+     :min-factor governing
+     :allowable-stress allowable-stress
+     :provenance provenance}))
+
 (defn export-color-map-data
   "Build per-node/per-element scalar data suitable for rendering via a
   color-map pipeline (kami-cae targeted `kami-eng-render`; left as plain

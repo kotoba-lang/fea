@@ -29,7 +29,7 @@ GraalVM.
 | | |
 |---|---|
 | Role | capability |
-| Tests | 36 tests, 80 assertions across 9 namespaces (JVM) and 27 tests, 57 assertions (portable nbb suite), all green |
+| Tests | 44 tests, 98 assertions across 9 namespaces (JVM) and 35 tests, 67 assertions (portable nbb suite), all green |
 | Solver scope | linear-static, `:beam2` (1-D bar) elements only — matches upstream `kami-cae`'s own scope exactly |
 
 ## What was ported
@@ -161,6 +161,21 @@ porting omission, it's upstream scope, preserved as-is
 
 (pp/field-range [1.0 5.0 3.0 7.0 2.0]) ;=> {:min 1.0 :max 7.0 :avg 3.6}
 (pp/export-color-map-data result :von-mises-stress)
+```
+
+`export-color-map-data`'s `:safety-factor` path keeps the hardcoded
+250 MPa mild-steel placeholder for kami-cae parity — **do not use it to
+grade a real design**. The executable counterpart
+`pp/factor-of-safety` takes a caller-supplied allowable stress that
+**must** carry provenance (`{:source ... :basis ...}`) — an
+unprovenanced allowable is rejected, the same fail-closed rule as
+`kotoba.fea.convergence`'s caller-owned `fs`:
+
+```clojure
+(pp/factor-of-safety (:stress solver-result)
+                     {:allowable-stress 200.0e6   ; Pa, from a dated source you own
+                      :provenance {:source "AMS ..., 2026-09 retrieval" :basis :yield}})
+;=> {:factors [...] :min-factor {:value v :element i} :allowable-stress ... :provenance ...}
 ```
 
 `probe-point` is ported *including* its documented limitation:
