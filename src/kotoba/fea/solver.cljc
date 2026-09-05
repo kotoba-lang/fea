@@ -146,19 +146,20 @@
           (* inv-det (- (* a01 a20) (* a00 a21)))
           (* inv-det (- (* a00 a11) (* a01 a10)))]]))))
 
-(defn- tet4-volume
-  "Signed volume*6 of tetrahedron p0..p3 (scalar triple product of the three
-  edge vectors from p0). |result|/6 is the element volume."
-  [p0 p1 p2 p3]
+(defn tet4-volume
+   "Signed volume*6 of tetrahedron p0..p3 (scalar triple product of the three
+   edge vectors from p0). |result|/6 is the element volume. Public so the
+   thermal solver can reuse the same geometry kernel."
+   [p0 p1 p2 p3]
   (v3/dot (v3/sub p1 p0) (cross (v3/sub p2 p0) (v3/sub p3 p0))))
 
-(defn- tet4-grads
+(defn tet4-grads
   "Shape-function gradients dN_i/d(xyz) for tet4 nodes p0..p3. Returns a
-  vector of 4 gradients [[gx gy gz] ...]. D = [p1-p0, p2-p0, p3-p0] as
-  columns; grad_i (i=1,2,3) = (D^-1)^T column i = D^-1 row i; grad_0 is the
-  negative sum of the other three (N0 = 1 - N1 - N2 - N3). Returns nil if D
-  is degenerate."
-  [p0 p1 p2 p3]
+   vector of 4 gradients [[gx gy gz] ...]. D = [p1-p0, p2-p0, p3-p0] as
+   columns; grad_i (i=1,2,3) = (D^-1)^T column i = D^-1 row i; grad_0 is the
+   negative sum of the other three (N0 = 1 - N1 - N2 - N3). Returns nil if D
+   is degenerate. Public so the thermal solver can reuse the same kernel."
+   [p0 p1 p2 p3]
   (let [D [[(- (p1 0) (p0 0)) (- (p2 0) (p0 0)) (- (p3 0) (p0 0))]
            [(- (p1 1) (p0 1)) (- (p2 1) (p0 1)) (- (p3 1) (p0 1))]
            [(- (p1 2) (p0 2)) (- (p2 2) (p0 2)) (- (p3 2) (p0 2))]]
