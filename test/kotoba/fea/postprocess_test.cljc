@@ -48,6 +48,61 @@
   (is (= [0.0 0.0 0.0] (pp/probe-point {:displacement []} [0.0 0.0 0.0]))))
 
 ;; ---------------------------------------------------------------------------
+;; factor-of-safety — caller-supplied provenance-carrying allowable
+;; ---------------------------------------------------------------------------
+
+(def fos-opts
+  {:allowable-stress 200.0e6
+   :provenance {:source "test fixture, dated 2026-09-04" :basis :yield}})
+
+(deftest factor-of-safety-basic-test
+  (let [res (pp/factor-of-safety [100.0e6 50.0e6 0.0] fos-opts)]
+    ;; allowable/stress per element; non-positive stress -> ##Inf (no load seen)
+    (is (= [2.0 4.0 ##Inf] (:factors res)))
+    ;; governing element is the smallest finite factor
+    (is (= {:value 2.0 :element 0} (:min-factor res)))
+    ;; the provenance is carried through verbatim
+    (is (= (:provenance fos-opts) (:provenance res)))))
+
+(deftest factor-of-safety-all-unloaded-test
+  (is (nil? (:min-factor (pp/factor-of-safety [0.0 -1.0] fos-opts)))))
+
+(deftest factor-of-safety-missing-allowable-throws-test
+  (is (thrown-with-msg? #?(:clj clojure.lang.ExceptionInfo :cljs js/Error)
+                        #"allowable-stress"
+                        (pp/factor-of-safety [1.0e6] {}))))
+
+(deftest factor-of-safety-negative-allowable-throws-test
+  (is (thrown-with-msg? #?(:clj clojure.lang.ExceptionInfo :cljs js/Error)
+                        #"positive"
+                        (pp/factor-of-safety [1.0e6]
+                                             {:allowable-stress -5.0e6
+                                              :provenance {:source "x" :basis :yield}}))))
+
+(deftest factor-of-safety-missing-provenance-throws-test
+  ;; an allowable without source/basis is not an allowable — fail closed
+  (is (thrown-with-msg? #?(:clj clojure.lang.ExceptionInfo :cljs js/Error)
+                        #"provenance"
+                        (pp/factor-of-safety [1.0e6] {:allowable-stress 200.0e6}))))
+
+(deftest factor-of-safety-empty-source-throws-test
+  (is (thrown-with-msg? #?(:clj clojure.lang.ExceptionInfo :cljs js/Error)
+                        #"provenance"
+                        (pp/factor-of-safety [1.0e6]
+                                             {:allowable-stress 200.0e6
+                                              :provenance {:source "" :basis :yield}}))))
+
+(deftest factor-of-safety-non-sequential-throws-test
+  (is (thrown-with-msg? #?(:clj clojure.lang.ExceptionInfo :cljs js/Error)
+                        #"sequential"
+                        (pp/factor-of-safety 1.0e6 fos-opts))))
+
+(deftest factor-of-safety-accepts-lazy-seq-test
+  ;; solver returns vectors, but lazy seqs from map must work too
+  (let [res (pp/factor-of-safety (map #(* 1.0e6 %) [100 100]) fos-opts)]
+    (is (= [2.0 2.0] (:factors res)))))
+
+
 ;; probe-point-idw — real inverse-distance interpolation using node positions
 ;; ---------------------------------------------------------------------------
 
