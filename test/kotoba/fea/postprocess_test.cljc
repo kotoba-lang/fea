@@ -2,7 +2,9 @@
   "Parity port of kami-cae's `tests::test_field_range_calculation`, plus
   coverage of `export-color-map-data` and `probe-point`."
   (:require [clojure.test :refer [deftest is]]
-            [kotoba.fea.postprocess :as pp]))
+            [kotoba.fea.mesh :as mesh]
+            [kotoba.fea.postprocess :as pp]
+            [kotoba.fea.vec3 :as v3]))
 
 (deftest field-range-calculation-test
   (let [values [1.0 5.0 3.0 7.0 2.0]
@@ -44,3 +46,116 @@
 
 (deftest probe-point-empty-test
   (is (= [0.0 0.0 0.0] (pp/probe-point {:displacement []} [0.0 0.0 0.0]))))
+
+;; ---------------------------------------------------------------------------
+;; factor-of-safety — caller-supplied provenance-carrying allowable
+;; ---------------------------------------------------------------------------
+
+(def fos-opts
+  {:allowable-stress 200.0e6
+   :provenance {:source "test fixture, dated 2026-09-04" :basis :yield}})
+
+(deftest factor-of-safety-basic-test
+  (let [res (pp/factor-of-safety [100.0e6 50.0e6 0.0] fos-opts)]
+    ;; allowable/stress per element; non-positive stress -> ##Inf (no load seen)
+    (is (= [2.0 4.0 ##Inf] (:factors res)))
+    ;; governing element is the smallest finite factor
+    (is (= {:value 2.0 :element 0} (:min-factor res)))
+    ;; the provenance is carried through verbatim
+    (is (= (:provenance fos-opts) (:provenance res)))))
+
+(deftest factor-of-safety-all-unloaded-test
+  (is (nil? (:min-factor (pp/factor-of-safety [0.0 -1.0] fos-opts)))))
+
+(deftest factor-of-safety-missing-allowable-throws-test
+  (is (thrown-with-msg? #?(:clj clojure.lang.ExceptionInfo :cljs js/Error)
+                        #"allowable-stress"
+                        (pp/factor-of-safety [1.0e6] {}))))
+
+(deftest factor-of-safety-negative-allowable-throws-test
+  (is (thrown-with-msg? #?(:clj clojure.lang.ExceptionInfo :cljs js/Error)
+                        #"positive"
+                        (pp/factor-of-safety [1.0e6]
+                                             {:allowable-stress -5.0e6
+                                              :provenance {:source "x" :basis :yield}}))))
+
+(deftest factor-of-safety-missing-provenance-throws-test
+  ;; an allowable without source/basis is not an allowable — fail closed
+  (is (thrown-with-msg? #?(:clj clojure.lang.ExceptionInfo :cljs js/Error)
+                        #"provenance"
+                        (pp/factor-of-safety [1.0e6] {:allowable-stress 200.0e6}))))
+
+(deftest factor-of-safety-empty-source-throws-test
+  (is (thrown-with-msg? #?(:clj clojure.lang.ExceptionInfo :cljs js/Error)
+                        #"provenance"
+                        (pp/factor-of-safety [1.0e6]
+                                             {:allowable-stress 200.0e6
+                                              :provenance {:source "" :basis :yield}}))))
+
+(deftest factor-of-safety-non-sequential-throws-test
+  (is (thrown-with-msg? #?(:clj clojure.lang.ExceptionInfo :cljs js/Error)
+                        #"sequential"
+                        (pp/factor-of-safety 1.0e6 fos-opts))))
+
+(deftest factor-of-safety-accepts-lazy-seq-test
+  ;; solver returns vectors, but lazy seqs from map must work too
+  (let [res (pp/factor-of-safety (map #(* 1.0e6 %) [100 100]) fos-opts)]
+    (is (= [2.0 2.0] (:factors res)))))
+
+
+;; probe-point-idw — real inverse-distance interpolation using node positions
+;; ---------------------------------------------------------------------------
+
+(def idw-mesh
+  ;; Two nodes on the x axis at unit positions, like `sample-result`'s
+  ;; two displacement entries (displacement is indexed by node order).
+  (-> (mesh/new-mesh)
+      (as-> m (:mesh (mesh/add-node m [0.0 0.0 0.0])))
+      (as-> m (:mesh (mesh/add-node m [1.0 0.0 0.0])))))
+
+(def idw-result {:displacement [[0.0 0.0 0.0] [3.0 4.0 0.0]]})
+
+(deftest probe-point-idw-exact-at-node-test
+  ;; A probe that coincides with a node returns that node's displacement
+  ;; exactly — no interpolation, no divide-by-zero.
+  (is (= [3.0 4.0 0.0]
+         (:displacement (pp/probe-point-idw idw-mesh idw-result [1.0 0.0 0.0]))))
+  (is (= 1 (:contributing-nodes (pp/probe-point-idw idw-mesh idw-result [1.0 0.0 0.0])))))
+
+(deftest probe-point-idw-midpoint-symmetry-test
+  ;; Equidistant from both nodes → equal weights → the plain average,
+  ;; which here is the known 1.5 2.0 0.0 from sample-result.
+  (is (< (v3/length (v3/sub [1.5 2.0 0.0]
+                            (:displacement (pp/probe-point-idw idw-mesh idw-result [0.5 0.0 0.0]))))
+         1e-12))
+  (is (= 2 (:contributing-nodes (pp/probe-point-idw idw-mesh idw-result [0.5 0.0 0.0])))))
+
+(deftest probe-point-idw-closer-node-dominates-test
+  ;; IDW is monotone in distance: the closer node's displacement must
+  ;; pull the interpolated value past the midpoint toward itself. Higher
+  ;; :power sharpens that pull (p=1 vs p=2), a sensitivity the caller can
+  ;; exercise — both directions stay on the same side of the average.
+  (let [mid [1.5 2.0 0.0]]
+    (doseq [p [1.0 2.0 4.0]]
+      (let [v (:displacement (pp/probe-point-idw idw-mesh idw-result [0.9 0.0 0.0] {:power p}))]
+        ;; closer to node 1 ([3 4 0]) than node 0 ([0 0 0]) → y > 2.0
+        (is (> (second v) (second mid))
+            (str "power " p " should pull toward the closer node"))))))
+
+(deftest probe-point-idw-radius-excludes-test
+  ;; With :radius, a probe outside every node's neighborhood reports 0
+  ;; contributing nodes and zero displacement — no silent extrapolation.
+  (let [r (pp/probe-point-idw idw-mesh idw-result [100.0 0.0 0.0] {:radius 1.0})]
+    (is (= [0.0 0.0 0.0] (:displacement r)))
+    (is (= 0 (:contributing-nodes r))))
+  ;; Within the radius, only one node is in range and the value collapses
+  ;; to that node's displacement (flagged by :contributing-nodes 1).
+  (let [r (pp/probe-point-idw idw-mesh idw-result [0.9 0.0 0.0] {:radius 0.2})]
+    (is (= [3.0 4.0 0.0] (:displacement r)))
+    (is (= 1 (:contributing-nodes r)))))
+
+(deftest probe-point-idw-empty-test
+  (is (= {:displacement [0.0 0.0 0.0] :contributing-nodes 0}
+         (pp/probe-point-idw (mesh/new-mesh) {:displacement []} [0.0 0.0 0.0])))
+  (is (= {:displacement [0.0 0.0 0.0] :contributing-nodes 0}
+         (pp/probe-point-idw (mesh/new-mesh) idw-result [0.0 0.0 0.0]))))
