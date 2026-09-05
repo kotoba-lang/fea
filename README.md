@@ -47,3 +47,235 @@ expansion produces. `:pressure`/`:convection` BCs (constructed by
 loudly (`:unsupported-bc-type`) instead of being silently dropped.
 
 ## What was ported
+
+Namespace-for-module mapping from `kami-cae/src/lib.rs`:
+
+| `kami-cae` (Rust) module | `kotoba.fea.*` (Clojure) namespace |
+|---|---|
+| `mesh` | `kotoba.fea.mesh` |
+| `material` | `kotoba.fea.material` (+ `resources/kami/fea/materials.edn`) |
+| `boundary` | `kotoba.fea.boundary` |
+| `solver` | `kotoba.fea.solver` |
+| `postprocess` | `kotoba.fea.postprocess` |
+| `glam::DVec3` (dependency) | `kotoba.fea.vec3` |
+
+`kotoba.fea` is the top-level overview namespace.
+
+### Mesh
+
+```clojure
+(require '[kotoba.fea.mesh :as mesh])
+
+(def m (mesh/generate-box-mesh 2.0 3.0 4.0 2)) ; width height depth divisions
+(mesh/mesh-stats m) ;=> {:node-count 27 :element-count 8 :min-quality 1.0 :avg-quality 1.0}
+
+(let [{m1 :mesh n0 :id} (mesh/add-node (mesh/new-mesh) [0.0 0.0 0.0])
+      {m2 :mesh n1 :id} (mesh/add-node m1 [1.0 0.0 0.0])
+      m3 (mesh/add-element m2 (mesh/beam2 0 [n0 n1]))]
+  (mesh/create-node-set m3 "fixed" [n0]))
+```
+
+Seven element topologies (`:beam2` `:tri3` `:tri6` `:quad4` `:tet4`
+`:tet10` `:hex8`) are represented as plain maps `{:type :id :nodes}`
+instead of Rust's `FeaElement` enum + `NodeId`/`ElementId` newtype
+wrappers — node/element ids are plain non-negative integers, the
+idiomatic Clojure equivalent (no information lost: the wrapper types
+carried no behavior beyond `Eq`/`Hash`).
+
+### Material
+
+```clojure
+(require '[kotoba.fea.material :as material]
+         '[kotoba.fea.material-loader :as loader])
+
+(def presets (loader/presets)) ; JVM resource read
+(material/find-material presets "Steel-Structural")
+;=> {:name "Steel-Structural"
+;    :model {:type :linear-elastic :youngs-modulus 2.0E11 :poissons-ratio 0.3
+;            :density 7850.0 :thermal-expansion 1.2E-5
+;            :thermal-conductivity 50.0 :specific-heat 490.0}}
+```
+
+The four built-in presets (Steel-Structural, Aluminum-6061,
+Titanium-6Al4V, Concrete) were hardcoded constants in
+`MaterialLibrary::{steel_structural,aluminum_6061,titanium_6al4v,concrete}`
+— extracted verbatim to `resources/kami/fea/materials.edn` as data, per
+this monorepo's Rust-crate-to-EDN+cljc port pattern
+(`kotoba-lang/kami-scene-contracts`). `kotoba.fea.material` (`.cljc`) is
+100% pure/portable — it never does I/O, not even reader-conditional
+guarded. Loading the EDN resource is a separate, deliberately plain
+`.clj` (not `.cljc`) namespace, `kotoba.fea.material-loader`, mirroring
+`kami-scene-contracts/src/kami/scene/contracts.cljc`'s
+`load-edn-resource` pattern but split out rather than reader-conditional
+guarded in place — inline `#?(:clj ...)`-only `require`s inside a
+`.cljc` `ns` form make `clj-kondo`'s `:cljs` analysis pass see an empty
+`(:require)` and hard error (`Invalid require: no libs specified to
+load`); splitting to a real `.clj` file sidesteps that cleanly and is
+honest about the fact that this loader has no `:cljs` branch at all.
+Callers on other hosts (cljs, SCI, GraalVM) read the same EDN file
+(`kotoba.fea.material/presets-resource`) via their own host's I/O and
+pass the parsed value to `find-material`/`add-material`, which are pure.
+
+Rust's `MaterialLibrary` struct (a `Vec<FeMaterial>` + inherent methods)
+has no idiomatic-Clojure counterpart worth keeping — a materials
+collection is just a plain vector of material maps here.
+
+### Boundary conditions
+
+```clojure
+(require '[kotoba.fea.boundary :as boundary])
+
+(boundary/displacement "fixed" boundary/dof-all [0.0 0.0 0.0])
+(boundary/force "load" [1000.0 0.0 0.0])
+(boundary/dof-contains? boundary/dof-all boundary/dof-rz) ;=> true
+```
+
+`DofMask` was a `u8` bitmask (`X`/`Y`/`Z`/`RX`/`RY`/`RZ` const flags,
+`union`/`contains` via bit-or/bit-and) — ported as keyword sets
+(`#{:x :y :z}`) with `clojure.set/union`/`clojure.set/subset?`, the
+idiomatic Clojure equivalent; no bit-twiddling helpers needed.
+
+### Solver
+
+```clojure
+(require '[kotoba.fea.solver :as solver])
+
+(solver/solve-linear-static mesh material bcs)
+;=> {:analysis-id "linear-static-0" :displacement [...] :stress [...]
+;    :strain [...] :max-displacement d :max-stress s}
+```
+
+Direct port of `solver::solve_linear_static` and its private
+`cholesky_solve` helper (dense symmetric-positive-definite Cholesky
+decomposition + forward/backward substitution) — same algorithm, same
+row/column-elimination technique for displacement boundary conditions,
+same zero-stiffness-DOF stabilization. `SolverError`'s four variants
+(`SingularMatrix` / `UnsupportedElement` / `NoLoads` /
+`NodeSetNotFound`) are ported as `ex-info` with `:type`
+`:singular-matrix` / `:unsupported-element` / `:no-loads` /
+`:node-set-not-found` — idiomatic Clojure error reporting in place of a
+`thiserror` enum.
+
+### Thermal (steady-state conduction — beyond upstream scope)
+
+```clojure
+(require '[kotoba.fea.thermal :as thermal])
+
+(thermal/solve-thermal-steady mesh 167.0   ; k [W/(m*K)], e.g. Aluminum-6061 preset
+                              [(boundary/temperature "hot" 400.0)
+                               (boundary/temperature "cold" 300.0)])
+;=> {:analysis-id "thermal-steady-0" :temperature [...] :flux [...]
+;    :heat-flow [...] :reactions [...] :max-temperature T :min-temperature T}
+```
+
+`kami-cae` declared `ThermalSteady` as an enum case but never implemented
+it; this repo does, as a new portable namespace `kotoba.fea.thermal`.
+Linear isotropic steady conduction (`div(k grad T) = 0`) on `:beam2` and
+`:tet4` elements, one temperature DOF per node, sharing the structural
+solver's dense-Cholesky path (and, now public, its `tet4-grads` /
+`tet4-volume` geometry kernels). Boundary conditions: prescribed
+temperature (`:temperature`, node sets) and convection (`:convection`,
+triangular face sets with the consistent h*A/12 matrix — register face
+sets with `thermal/create-face-set` or pass node triples inline).
+Units: temperature [K], k [W/(m*K)], h [W/(m^2*K)], heat flow [W].
+`tet4-grads`/`tet4-volume` were made public in `kotoba.fea.solver` for
+reuse (no other change to the structural solver). Acceptance invariant:
+with no internal sources, `sum(:reactions) = 0` (or the convective loss
+when convection is present); tests verify the exact linear field on a
+1-D rod and a 6-tet unit cube.
+
+`AnalysisType` (6 variants) and `SolverMethod` (3 variants) are ported as
+data only (`kotoba.fea.solver/analysis-types`,
+`default-solver-method`/`conjugate-gradient-method`/`gmres-method`) since
+upstream `kami-cae` itself only ever *implemented* `LinearStatic` +
+`DirectCholesky` — the other variants were declared enum cases with no
+dispatch anywhere in `kami-cae`. Same for mesh assembly: `kotoba.fea.mesh`
+can construct all seven element topologies (full parity), but
+`kotoba.fea.solver` only assembles `:beam2`, because that's all
+`kami-cae`'s own `solve_linear_static` ever assembled — this isn't a
+porting omission, it's upstream scope, preserved as-is
+(`kotoba.fea/solver-assembly-support`).
+
+### Postprocess
+
+```clojure
+(require '[kotoba.fea.postprocess :as pp])
+
+(pp/field-range [1.0 5.0 3.0 7.0 2.0]) ;=> {:min 1.0 :max 7.0 :avg 3.6}
+(pp/export-color-map-data result :von-mises-stress)
+```
+
+`export-color-map-data`'s `:safety-factor` path keeps the hardcoded
+250 MPa mild-steel placeholder for kami-cae parity — **do not use it to
+grade a real design**. The executable counterpart
+`pp/factor-of-safety` takes a caller-supplied allowable stress that
+**must** carry provenance (`{:source ... :basis ...}`) — an
+unprovenanced allowable is rejected, the same fail-closed rule as
+`kotoba.fea.convergence`'s caller-owned `fs`:
+
+```clojure
+(pp/factor-of-safety (:stress solver-result)
+                     {:allowable-stress 200.0e6   ; Pa, from a dated source you own
+                      :provenance {:source "AMS ..., 2026-09 retrieval" :basis :yield}})
+;=> {:factors [...] :min-factor {:value v :element i} :allowable-stress ... :provenance ...}
+```
+
+`probe-point` is ported *including* its documented limitation:
+upstream's own implementation only had `AnalysisResult` (no node
+positions) at that call site, so despite the docstring promising
+inverse-distance-weighted interpolation, it actually just returns the
+average displacement across all nodes. Ported verbatim, limitation and
+all, with a note in the docstring — fixing it would need node positions
+threaded alongside the result, which is a real (not cosmetic) API change
+left for a follow-up.
+
+## What was intentionally left unported, and why
+
+**Nothing was skipped for GPU/wgpu-rendering, OS-syscall, or
+wasm-bindgen-bridge reasons** — unlike other `kami-eng-*` crates,
+`kami-cae` contained none of that. It declared `kami-eng-core` and
+`kami-eng-render` as `Cargo.toml` dependencies but never actually
+`use`d either crate anywhere in `lib.rs` (verified: `git show
+HEAD:kami-cae/src/lib.rs | grep kami_eng` in `kami-engine` returns
+nothing) — the only reference is a doc comment noting that
+`export_color_map_data`'s output is *intended* for consumption by
+`kami-eng-render`'s color-map pipeline, which is a downstream
+host-adapter concern (GPU rendering) outside this repo's scope by
+construction, not something to port here. The entire `kami-cae` crate
+(mesh, material, boundary, solver, postprocess, and all five inline
+`#[test]`s) was pure algorithmic/data logic and has been ported in full.
+
+Representation-only changes (no information lost):
+
+- `NodeId`/`ElementId` newtype wrappers -> plain integers.
+- `serde`/`serde_json` (Rust serialization) -> not needed; EDN is
+  Clojure's native serialization.
+- `thiserror`'s `SolverError` enum -> `ex-info` with `:type`.
+- `log` (Rust logging) -> not ported; no logging in domain namespaces,
+  consistent with this monorepo's no-I/O convention for `.cljc` domain
+  code.
+
+## Tests
+
+Parity tests for all five of `kami-cae`'s inline `#[test]`s, using the
+same concrete expected values as the Rust originals:
+
+- `material-library-presets-test` <- `test_material_library_presets`
+- `box-mesh-generation-test` <- `test_box_mesh_generation`
+- `boundary-condition-creation-test` <- `test_boundary_condition_creation`
+- `bar-fea-solve-test` <- `test_1d_bar_fea_solve` (single bar element,
+  E = 200 GPa, F = 1000 N -> u = 5e-9 m, sigma = 1000 Pa; same tolerances)
+- `field-range-calculation-test` <- `test_field_range_calculation`
+
+Plus additional coverage for error paths (`:no-loads`,
+`:node-set-not-found`), `cholesky-solve` against a known 2x2 system, and
+`postprocess`'s remaining `ResultField` branches.
+
+```bash
+clojure -X:test
+clojure -M:lint
+```
+
+## License
+
+Apache License 2.0.

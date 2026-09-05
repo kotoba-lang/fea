@@ -19,7 +19,8 @@
          '[kotoba.fea.convergence-test]
          '[kotoba.fea.mesh-test]
          '[kotoba.fea.postprocess-test]
-         '[kotoba.fea.pressure-test])
+         '[kotoba.fea.pressure-test]
+         '[kotoba.fea.thermal-steady-test])
 
 (defmethod t/report [:cljs.test/default :end-run-tests] [m]
   (when-not (t/successful? m) (set! (.-exitCode js/process) 1)))
@@ -28,4 +29,5 @@
               'kotoba.fea.convergence-test
               'kotoba.fea.mesh-test
               'kotoba.fea.postprocess-test
-              'kotoba.fea.pressure-test)
+              'kotoba.fea.pressure-test
+              'kotoba.fea.thermal-steady-test)
