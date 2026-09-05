@@ -8,11 +8,13 @@
   pure functions: no network, no I/O.
 
   A `mesh` is `{:nodes [...] :elements [...] :node-sets {...}
-  :element-sets {...}}`. A node is `{:id int :position [x y z]}`. An
-  element is `{:type kw :id int :nodes [ids...]}` — `:type` is one of
-  `:beam2` `:tri3` `:tri6` `:quad4` `:tet4` `:tet10` `:hex8`, matching
-  kami-cae's `FeaElement` variants (2/3/6/4/4/10/8 node topologies
-  respectively).")
+  :element-sets {...} :face-sets {...}}`. A node is `{:id int :position
+  [x y z]}`. An element is `{:type kw :id int :nodes [ids...]}` — `:type`
+  is one of `:beam2` `:tri3` `:tri6` `:quad4` `:tet4` `:tet10` `:hex8`,
+  matching kami-cae's `FeaElement` variants (2/3/6/4/4/10/8 node
+  topologies respectively). A face set maps a name to a vector of
+  triangular faces, each face `[a b c]` node ids — the surface the
+  solver's `:pressure` boundary condition acts on.")
 
 (def element-orders
   "Linear (first-order) vs quadratic (second-order) elements."
@@ -28,7 +30,7 @@
    :quality-threshold 0.3
    :order :linear})
 
-(defn new-mesh [] {:nodes [] :elements [] :node-sets {} :element-sets {}})
+(defn new-mesh [] {:nodes [] :elements [] :node-sets {} :element-sets {} :face-sets {}})
 
 (defn add-node
   "Append a node at `position` (`[x y z]`). Returns `{:mesh mesh' :id id}`
@@ -51,6 +53,13 @@
   "Register (or overwrite) a named element set."
   [mesh name ids]
   (assoc-in mesh [:element-sets name] (vec ids)))
+
+(defn create-face-set
+  "Register (or overwrite) a named face set. `faces` is a vector of
+  triangular faces, each `[a b c]` node ids — the surface a `:pressure`
+  boundary condition acts on."
+  [mesh name faces]
+  (assoc-in mesh [:face-sets name] (mapv vec faces)))
 
 ;; ---------------------------------------------------------------------------
 ;; element constructors
