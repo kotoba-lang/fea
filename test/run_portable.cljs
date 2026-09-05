@@ -17,6 +17,7 @@
 (require '[cljs.test :as t]
          '[kotoba.fea.boundary-test]
          '[kotoba.fea.convergence-test]
+         '[kotoba.fea.fatigue-test]
          '[kotoba.fea.mesh-test]
          '[kotoba.fea.postprocess-test]
          '[kotoba.fea.pressure-test]
@@ -27,6 +28,7 @@
 
 (t/run-tests 'kotoba.fea.boundary-test
               'kotoba.fea.convergence-test
+              'kotoba.fea.fatigue-test
               'kotoba.fea.mesh-test
               'kotoba.fea.postprocess-test
               'kotoba.fea.pressure-test
