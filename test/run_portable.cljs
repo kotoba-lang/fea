@@ -19,6 +19,7 @@
          '[kotoba.fea.convergence-test]
          '[kotoba.fea.fatigue-test]
          '[kotoba.fea.mesh-test]
+         '[kotoba.fea.modal-test]
          '[kotoba.fea.postprocess-test]
          '[kotoba.fea.pressure-test]
          '[kotoba.fea.thermal-steady-test])
@@ -30,6 +31,7 @@
               'kotoba.fea.convergence-test
               'kotoba.fea.fatigue-test
               'kotoba.fea.mesh-test
+             'kotoba.fea.modal-test
               'kotoba.fea.postprocess-test
               'kotoba.fea.pressure-test
               'kotoba.fea.thermal-steady-test)
