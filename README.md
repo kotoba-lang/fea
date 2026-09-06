@@ -30,7 +30,7 @@ GraalVM.
 |---|---|
 | Role | capability |
 | Tests | 77 tests, 206 assertions across 11 namespaces (JVM) and 58 tests, 160 assertions across 7 (portable nbb suite), all green |
-| Solver scope | linear-static, `:beam2` (1-D bar, axial) + `:tet4` (3-D) elements; isotropic thermal strain from `:temperature` BCs + `:reference-temperature`; `:pressure` face-set BCs as consistent nodal loads; steady-state conduction (`:thermal-steady`); Miner/Basquin spectrum fatigue |
+| Solver scope | linear-static, `:beam2` + `:tet4`; isotropic thermal strain `:temperature`/`:reference-temperature`; `:pressure` face-set BCs; steady-state conduction (`:thermal-steady`); natural-frequency modal analysis for `:tet4` (`:modal`); Miner/Basquin spectrum fatigue |
 
 ## Thermal strain (tet4 + beam2)
 
@@ -185,11 +185,12 @@ when convection is present); tests verify the exact linear field on a
 1-D rod and a 6-tet unit cube.
 
 `AnalysisType` (6 variants) and `SolverMethod` (3 variants) are ported as
-data only (`kotoba.fea.solver/analysis-types`,
-`default-solver-method`/`conjugate-gradient-method`/`gmres-method`) since
-upstream `kami-cae` itself only ever *implemented* `LinearStatic` +
-`DirectCholesky` — the other variants were declared enum cases with no
-dispatch anywhere in `kami-cae`. Same for mesh assembly: `kotoba.fea.mesh`
+data (`kotoba.fea.solver/analysis-types`,
+`default-solver-method`/`conjugate-gradient-method`/`gmres-method`). Upstream
+`kami-cae` only ever *implemented* `LinearStatic` + `DirectCholesky`;
+`kotoba.fea.modal` now also executes `:modal` (natural-frequency) for
+`:tet4` — the remaining variants (`:nonlinear-static` `:thermal-transient`
+`:buckling`) are still declared-but-unimplemented. Same for mesh assembly: `kotoba.fea.mesh`
 can construct all seven element topologies (full parity), but
 `kotoba.fea.solver` only assembles `:beam2`, because that's all
 `kami-cae`'s own `solve_linear_static` ever assembled — this isn't a
@@ -257,6 +258,39 @@ assumed, and curve fixtures in tests are labelled illustrative-only.
                                                :non-damaging-blocks 1
                                                :criterion :miner-linear ...}
 ```
+
+### Modal (natural frequency — beyond upstream scope)
+
+`kotoba.fea.modal` executes the `:modal` `AnalysisType` / `:mode-shape`
+`ResultField` that kami-cae only ever declared (both computed nothing in the
+static solver). It is the executable counterpart for the
+`:vibration-fatigue-and-safety` design domain: fundamental natural frequencies
+let a designer separate motor excitation lines from structural resonance, and
+a frequency response feeds the load spectrum `kotoba.fea.fatigue` consumes.
+
+```clojure
+(require '[kotoba.fea.modal :as modal])
+
+(modal/solve-modal mesh material
+                   [(boundary/displacement "fixed" #{:x :y :z} [0.0 0.0 0.0])])
+;=> {:analysis-id "modal-0"
+;    :frequencies-hz [...]   ; ascending, f = sqrt(lambda)/(2 pi)
+;    :omega-1/s [...]        ; sqrt(lambda)
+;    :mode-shapes [[[x y z] ...]] ...}
+```
+
+Free vibration solves (K - omega^2 M) phi = 0 on the free-DOF subspace: K is the
+same linear-elastic stiffness the static solver assembles, M is the consistent
+tet4 mass matrix from the material's `:density` (int_V N_i N_j dV = V/10 for
+i=j, V/20 otherwise), Dirichlet displacement BCs eliminate the constrained
+DOFs, and the symmetric generalized eigenproblem is reduced to standard form
+with Cholesky and diagonalized by cyclic symmetric Jacobi. Applied loads
+(`:force`/`:pressure`/`:temperature`/`:convection`) are rejected
+(`:unsupported-bc-type`) — forced response is not free vibration. Scope is
+`:tet4` only: beam2's transverse DOFs carry no stiffness, so a beam modal would
+emit artifact rigid modes. An under-constrained structure reports true
+near-zero rigid modes before the elastic ones — the caller reads those as
+unanchored modes, not design facts. Dense matrices: educational / small-mesh.
 
 ## What was intentionally left unported, and why
 

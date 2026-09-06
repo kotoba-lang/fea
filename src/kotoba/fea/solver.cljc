@@ -283,9 +283,12 @@
          k-global
          (range 12))))))
 
-(defn- assemble-stiffness
+(defn assemble-stiffness
   "Assemble the global stiffness matrix (dense, row-major, ndof x ndof) from
-  mesh elements. Dispatches on element :type — :beam2 and :tet4 supported."
+  mesh elements. Dispatches on element :type. Public so the natural-frequency
+  solver (`kotoba.fea.modal`) reuses the same linear-elastic stiffness for the
+  free-vibration ((K - w^2 M)) problem instead of duplicating element assembly.
+  Dispatches on element :type — :beam2 and :tet4 supported."
   [mesh youngs-modulus poissons-ratio ndof]
   (let [nodes (:nodes mesh)]
     (reduce
