@@ -22,6 +22,7 @@
          '[kotoba.fea.modal-test]
          '[kotoba.fea.postprocess-test]
          '[kotoba.fea.pressure-test]
+         '[kotoba.fea.resonance-test]
          '[kotoba.fea.thermal-steady-test])
 
 (defmethod t/report [:cljs.test/default :end-run-tests] [m]
@@ -34,4 +35,5 @@
              'kotoba.fea.modal-test
               'kotoba.fea.postprocess-test
               'kotoba.fea.pressure-test
+              'kotoba.fea.resonance-test
               'kotoba.fea.thermal-steady-test)

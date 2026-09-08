@@ -29,8 +29,8 @@ GraalVM.
 | | |
 |---|---|
 | Role | capability |
-| Tests | 77 tests, 206 assertions across 11 namespaces (JVM) and 58 tests, 160 assertions across 7 (portable nbb suite), all green |
-| Solver scope | linear-static, `:beam2` + `:tet4`; isotropic thermal strain `:temperature`/`:reference-temperature`; `:pressure` face-set BCs; steady-state conduction (`:thermal-steady`); natural-frequency modal analysis for `:tet4` (`:modal`); Miner/Basquin spectrum fatigue |
+| Tests | 98 tests, 294 assertions across 13 namespaces (JVM) and 79 tests, 248 assertions across 9 (portable nbb suite), all green |
+| Solver scope | linear-static, `:beam2` + `:tet4`; isotropic thermal strain `:temperature`/`:reference-temperature`; `:pressure` face-set BCs; steady-state conduction (`:thermal-steady`); natural-frequency modal analysis for `:tet4` (`:modal`); Miner/Basquin spectrum fatigue; driveline/resonance separation (`:resonance`) |
 
 ## Thermal strain (tet4 + beam2)
 
@@ -291,6 +291,48 @@ with Cholesky and diagonalized by cyclic symmetric Jacobi. Applied loads
 emit artifact rigid modes. An under-constrained structure reports true
 near-zero rigid modes before the elastic ones — the caller reads those as
 unanchored modes, not design facts. Dense matrices: educational / small-mesh.
+
+
+### Resonance (driveline excitation ↔ structural natural frequency)
+
+`kotoba.fea.resonance` is the executable counterpart to the goal
+`kotoba.fea.modal` declares in its own docstring — that natural frequencies
+let the designer separate motor excitation lines from structural resonance
+before committing geometry — which on the landed plane had no contract that
+actually does the separating. It is new, not a port.
+
+```clojure
+(require '[kotoba.fea.resonance :as resonance])
+
+;; a driveline at 3600 rpm = 60 rev/s, first four harmonics
+(def lines (resonance/engine-harmonics-hz 60.0 [1 2 3 4]))
+
+;; how far each harmonic sits from the structure's natural frequencies
+(resonance/resonance-separation (:frequencies-hz modal-result) lines)
+;=> {:lines [{:order 1 :frequency-hz 60.0 :nearest-natural-hz f :separation-frac s} ...]
+;    :min-separation-frac s :worst-case {...}}
+
+;; then the caller's sourced no-resonance band as the acceptance gate
+(resonance/resonance-acceptance
+  (:frequencies-hz modal-result) lines
+  {:min-separation-frac 0.10
+   :provenance {:source "<no-resonance band spec>" :date "2026-09-08"}})
+;=> {:passed? bool :at-risk n :lines [{... :pass? bool} ...]
+;    :provenance {...} :unmeasured {...}}
+```
+
+The executed math is exact and compositional: `engine-harmonics-hz` is the
+identity `f-order = n × rev-s`; `resonance-separation` is
+`|f-exc − f-nat| / f-nat` to the nearest natural frequency; the acceptance
+band is a caller decision that MUST carry `:provenance` or the call refuses
+(fail closed, same rule as `kotoba.fea.fatigue`). No Mg/MgH2, PEM, thermal,
+fatigue, or performance constant is invented — the driveline speed, the
+orders present, the natural frequencies, and the exclusion band are all
+caller measurements. Damping ratio, excitation amplitude, and material
+damping are reported on every result as declared `:unmeasured` — a
+separation ratio alone is not a resonance verdict, it is the auditable
+input to one.
+
 
 ## What was intentionally left unported, and why
 
