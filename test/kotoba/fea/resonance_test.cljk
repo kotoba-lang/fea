@@ -9,7 +9,7 @@
   overlapping a structural natural frequency) is real engineering; the
   numbers are textbook arithmetic.
 
-  Portable `.cljc`: runs on the JVM (`clojure -X:test`) and on nbb
+  Portable `.cljc`: runs on the JVM (`kbb -X:test`) and on nbb
   (`test/run_portable.cljk`)."
   (:require [clojure.test :refer [deftest is testing]]
             [kotoba.fea.resonance :as res]))

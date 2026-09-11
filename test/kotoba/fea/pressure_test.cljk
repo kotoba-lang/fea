@@ -8,7 +8,7 @@
   on a linear tet4's triangular face: p*A/3 per face node along the
   inward normal.
 
-  Portable `.cljc`: runs on the JVM (`clojure -X:test`) and on nbb
+  Portable `.cljc`: runs on the JVM (`kbb -X:test`) and on nbb
   (`test/run_portable.cljk`). The solver under test takes a plain
   material map, so no JVM-only resource loader is needed here."
   (:require [clojure.test :refer [deftest is]]
