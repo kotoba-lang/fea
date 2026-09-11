@@ -7,7 +7,7 @@
   is the repo's own Steel-Structural preset (E = 200 GPa, nu = 0.3, rho =
   7850 kg/m^3), used only to exercise the unit-conversion and mass paths.
 
-  Portable `.cljc`: runs on the JVM (`clojure -X:test`) and on nbb
+  Portable `.cljc`: runs on the JVM (`kbb -X:test`) and on nbb
   (`test/run_portable.cljk`)."
   (:require [clojure.test :refer [deftest is testing]]
             [kotoba.fea.boundary :as boundary]

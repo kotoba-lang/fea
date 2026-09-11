@@ -377,8 +377,8 @@ Plus additional coverage for error paths (`:no-loads`,
 `postprocess`'s remaining `ResultField` branches.
 
 ```bash
-clojure -X:test
-clojure -M:lint
+kbb -X:test
+kbb -M:lint
 ```
 
 ## License
