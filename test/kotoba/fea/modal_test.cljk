@@ -8,7 +8,7 @@
   7850 kg/m^3), used only to exercise the unit-conversion and mass paths.
 
   Portable `.cljc`: runs on the JVM (`clojure -X:test`) and on nbb
-  (`test/run_portable.cljs`)."
+  (`test/run_portable.cljk`)."
   (:require [clojure.test :refer [deftest is testing]]
             [kotoba.fea.boundary :as boundary]
             [kotoba.fea.mesh :as mesh]
