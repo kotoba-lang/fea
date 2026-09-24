@@ -1,7 +1,7 @@
 (ns kotoba.fea.postprocess-test
   "Parity port of kami-cae's `tests::test_field_range_calculation`, plus
   coverage of `export-color-map-data` and `probe-point`."
-  (:require [clojure.test :refer [deftest is]]
+  (:require [kotoba.test :refer [deftest is]]
             [kotoba.fea.mesh :as mesh]
             [kotoba.fea.postprocess :as pp]
             [kotoba.fea.vec3 :as v3]))

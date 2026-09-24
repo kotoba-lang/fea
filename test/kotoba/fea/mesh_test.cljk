@@ -1,6 +1,6 @@
 (ns kotoba.fea.mesh-test
   "Parity port of kami-cae's `tests::test_box_mesh_generation`."
-  (:require [clojure.test :refer [deftest is]]
+  (:require [kotoba.test :refer [deftest is]]
             [kotoba.fea.mesh :as mesh]))
 
 (deftest box-mesh-generation-test

@@ -3,7 +3,7 @@
   Every curve used here carries an explicit test-fixture provenance; the
   numeric curve values are illustrative fixtures for hand-checkable
   arithmetic, NOT measured material constants for any Mg alloy."
-  (:require [clojure.test :refer [deftest is testing]]
+  (:require [kotoba.test :refer [deftest is testing]]
             [kotoba.fea.fatigue :as fatigue]))
 
 (defn- abs* [x] #?(:clj (Math/abs x) :cljs (js/Math.abs x)))

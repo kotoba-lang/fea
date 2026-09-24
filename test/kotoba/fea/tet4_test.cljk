@@ -2,7 +2,7 @@
   "tet4 (3-D linear tetrahedron) assembly + solve tests. The solver's beam2
   path is covered by kotoba.fea.solver-test; these exercise the new tet4 path:
   build a mesh, assemble V*B^T*D*B, solve a linear-static case."
-  (:require [clojure.test :refer [deftest is]]
+  (:require [kotoba.test :refer [deftest is]]
             [kotoba.fea.mesh :as mesh]
             [kotoba.fea.boundary :as boundary]
             [kotoba.fea.solver :as solver]))

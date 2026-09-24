@@ -3,7 +3,7 @@
 
   Plain `.clj` (not `.cljc`): exercises `kotoba.fea.material-loader`,
   which is JVM-only by design (see that namespace's docstring)."
-  (:require [clojure.test :refer [deftest is]]
+  (:require [kotoba.test :refer [deftest is]]
             [kotoba.fea.material :as material]
             [kotoba.fea.material-loader :as loader]))
 

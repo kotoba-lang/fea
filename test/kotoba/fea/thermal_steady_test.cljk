@@ -5,7 +5,7 @@
   (`kotoba.fea.material`, resources/kami/fea/materials.edn) — Aluminum-6061
   k = 167.0 W/(m*K). Geometry is idealized; no measured Mg/MgH2 or PEM
   thermal constants are asserted here."
-  (:require [clojure.test :refer [deftest is testing]]
+  (:require [kotoba.test :refer [deftest is testing]]
             [kotoba.fea.boundary :as boundary]
             [kotoba.fea.mesh :as mesh]
             [kotoba.fea.thermal :as thermal]))
