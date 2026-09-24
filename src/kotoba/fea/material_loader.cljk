@@ -20,7 +20,7 @@
   `kotoba.fea.material/find-material`/`add-material` and existing callers
   (e.g. `material-test.clj`'s `(get-in steel [:model :youngs-modulus])`)
   are unaffected."
-  (:require [clojure.edn :as edn]
+  (:require [kotoba.lang.edn :as edn]
             [clojure.java.io :as io]
             [kotoba.fea.material :as material]))
 
