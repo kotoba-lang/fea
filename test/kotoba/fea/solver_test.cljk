@@ -6,7 +6,7 @@
   Plain `.clj` (not `.cljc`): uses `kotoba.fea.material-loader` (JVM-only
   by design, see that namespace's docstring) to fetch real preset data;
   `kotoba.fea.solver` itself under test remains portable `.cljc`."
-  (:require [clojure.test :refer [deftest is]]
+  (:require [kotoba.test :refer [deftest is]]
             [kotoba.fea.boundary :as boundary]
             [kotoba.fea.material :as material]
             [kotoba.fea.material-loader :as loader]

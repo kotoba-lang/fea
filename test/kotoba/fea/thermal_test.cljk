@@ -25,7 +25,7 @@
     (`:thermal-expansion-missing`).
   - No `:temperature` BCs: result carries no `:thermal` key (bit-identical
     contract to the purely mechanical solve)."
-  (:require [clojure.test :refer [deftest is]]
+  (:require [kotoba.test :refer [deftest is]]
             [kotoba.fea.boundary :as boundary]
             [kotoba.fea.mesh :as mesh]
             [kotoba.fea.solver :as solver]))

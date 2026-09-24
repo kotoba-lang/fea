@@ -11,7 +11,7 @@
 
   Portable `.cljc`: runs on the JVM (`kbb -X:test`) and on nbb
   (`test/run_portable.cljk`)."
-  (:require [clojure.test :refer [deftest is testing]]
+  (:require [kotoba.test :refer [deftest is testing]]
             [kotoba.fea.resonance :as res]))
 
 (defn- close? [a b tol] (< (Math/abs (- (double a) (double b))) tol))

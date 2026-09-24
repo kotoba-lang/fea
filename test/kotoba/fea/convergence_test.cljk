@@ -2,7 +2,7 @@
   "Verification of the convergence contract against manufactured
   solutions with EXACT closed-form answers (pure math — no physical
   constant is invented), plus fail-closed coverage."
-  (:require [clojure.test :refer [deftest is testing]]
+  (:require [kotoba.test :refer [deftest is testing]]
             [kotoba.fea.convergence :as c]))
 
 (defn- close?
