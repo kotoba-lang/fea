@@ -48,7 +48,7 @@
 
   100% pure/portable `.cljc`, no I/O, matching this repo's domain-namespace
   convention."
-  (:require [clojure.string :as str]))
+  (:require [kotoba.lang.text :as str]))
 
 (defn- finite? [x]
   (and (number? x) (== x x) (not= x ##Inf) (not= x ##-Inf)))
