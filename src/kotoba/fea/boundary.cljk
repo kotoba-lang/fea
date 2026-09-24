@@ -17,7 +17,7 @@
   matching kami-cae's `BoundaryCondition` enum variants 1:1. No network,
   no I/O."
   (:refer-clojure :exclude [force])
-  (:require [clojure.set :as set]))
+  (:require [kotoba.lang.coll :as set]))
 
 (def dof-x #{:x})
 (def dof-y #{:y})
