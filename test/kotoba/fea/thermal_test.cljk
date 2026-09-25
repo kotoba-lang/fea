@@ -25,7 +25,7 @@
     (`:thermal-expansion-missing`).
   - No `:temperature` BCs: result carries no `:thermal` key (bit-identical
     contract to the purely mechanical solve)."
-  (:require [kotoba.test :refer [deftest is]]
+  (:require [kotoba.lang.error :as kerror] [kotoba.test :refer [deftest is]]
             [kotoba.fea.boundary :as boundary]
             [kotoba.fea.mesh :as mesh]
             [kotoba.fea.solver :as solver]))
@@ -173,7 +173,7 @@
         bcs [(boundary/displacement "fixed" boundary/dof-all [0.0 0.0 0.0])
              (boundary/force "free" [1.0 0.0 0.0])
              (boundary/convection "free" 10.0 t-ref)]]
-    (is (thrown-with-msg? clojure.lang.ExceptionInfo #"unsupported boundary condition type"
+    (is (thrown-with-msg? kerror/ExceptionInfo #"unsupported boundary condition type"
                           (solver/solve-linear-static mesh steel bcs)))))
 
 (deftest incomplete-thermal-field-errors-test
@@ -181,7 +181,7 @@
   (let [{:keys [mesh]} (bar-mesh 1.0)
         bcs [(boundary/displacement "fixed" boundary/dof-all [0.0 0.0 0.0])
              (boundary/temperature "free" t-hot)]]  ; node 0 unprescribed
-    (is (thrown-with-msg? clojure.lang.ExceptionInfo #"no prescribed temperature"
+    (is (thrown-with-msg? kerror/ExceptionInfo #"no prescribed temperature"
                           (solver/solve-linear-static mesh steel bcs
                                                       {:reference-temperature t-ref})))))
 
@@ -189,7 +189,7 @@
   (let [{:keys [mesh]} (bar-mesh 1.0)
         bcs [(boundary/displacement "fixed" boundary/dof-all [0.0 0.0 0.0])
              (boundary/temperature "both" t-hot)]]
-    (is (thrown-with-msg? clojure.lang.ExceptionInfo #"reference-temperature"
+    (is (thrown-with-msg? kerror/ExceptionInfo #"reference-temperature"
                           (solver/solve-linear-static mesh steel bcs)))))
 
 (deftest thermal-expansion-missing-test
@@ -198,7 +198,7 @@
              :model {:type :linear-elastic :youngs-modulus e :poissons-ratio nu}}
         bcs [(boundary/displacement "fixed" boundary/dof-all [0.0 0.0 0.0])
              (boundary/temperature "both" t-hot)]]
-    (is (thrown-with-msg? clojure.lang.ExceptionInfo #"thermal-expansion"
+    (is (thrown-with-msg? kerror/ExceptionInfo #"thermal-expansion"
                           (solver/solve-linear-static mesh mat bcs
                                                       {:reference-temperature t-ref})))))
 
