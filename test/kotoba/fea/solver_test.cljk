@@ -6,7 +6,7 @@
   Plain `.clj` (not `.cljc`): uses `kotoba.fea.material-loader` (JVM-only
   by design, see that namespace's docstring) to fetch real preset data;
   `kotoba.fea.solver` itself under test remains portable `.cljc`."
-  (:require [kotoba.test :refer [deftest is]]
+  (:require [kotoba.lang.error :as kerror] [kotoba.test :refer [deftest is]]
             [kotoba.fea.boundary :as boundary]
             [kotoba.fea.material :as material]
             [kotoba.fea.material-loader :as loader]
@@ -43,7 +43,7 @@
         m4 (mesh/create-node-set m3 "fixed" [n0])
         mat (material/find-material (loader/presets) "Steel-Structural")
         bcs [(boundary/displacement "fixed" boundary/dof-all [0.0 0.0 0.0])]]
-    (is (thrown-with-msg? clojure.lang.ExceptionInfo
+    (is (thrown-with-msg? kerror/ExceptionInfo
                            #"no force boundary conditions"
                            (solver/solve-linear-static m4 mat bcs)))))
 
@@ -53,7 +53,7 @@
         m3 (mesh/add-element m2 (mesh/beam2 0 [n0 n1]))
         mat (material/find-material (loader/presets) "Steel-Structural")
         bcs [(boundary/force "missing" [1.0 0.0 0.0])]]
-    (is (thrown-with-msg? clojure.lang.ExceptionInfo
+    (is (thrown-with-msg? kerror/ExceptionInfo
                            #"not found in mesh"
                            (solver/solve-linear-static m3 mat bcs)))))
 

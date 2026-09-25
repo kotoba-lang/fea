@@ -21,7 +21,7 @@
   (e.g. `material-test.clj`'s `(get-in steel [:model :youngs-modulus])`)
   are unaffected."
   (:require [kotoba.lang.edn :as edn]
-            [clojure.java.io :as io]
+            [kotoba.io :as io]
             [kotoba.fea.material :as material]))
 
 (defn load-edn-resource [path]
